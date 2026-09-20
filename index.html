@@ -304,7 +304,7 @@ a { color: inherit; }
   <div class="app-header-actions">
     <button class="hbtn warn" id="verStaleBtn" onclick="showWorkerStale()">⚠️ الـ Worker نسخة قديمة</button>
     <button class="hbtn" onclick="openAbout()">ℹ️ عن الأداة</button>
-    <button class="hbtn" id="verBtn" onclick="openChangelog()">v1.0.0 📋</button>
+    <button class="hbtn" id="verBtn" onclick="openChangelog()">v1.0.1 📋</button>
     <button class="hbtn" onclick="doLogout()" aria-label="تسجيل الخروج">🚪 خروج</button>
     <button class="hbtn" onclick="openSettings()">⚙️ الإعدادات</button>
   </div>
@@ -397,6 +397,12 @@ a { color: inherit; }
   <div class="eco-modal" style="max-width:560px;">
     <div class="eco-modal-hdr"><h3>📋 سجل الإصدارات</h3><button class="modal-close-x" onclick="closeChangelog()">✕</button></div>
     <div class="eco-modal-body">
+      <div class="cl-entry">
+        <span class="cl-tag fix">إصلاح</span><b>v1.0.1</b> — 20-09-2026
+        <ul>
+          <li>«شيل المنتجات المحددة» كان بيفشل دايمًا بـ <code>calculatedOrder_lookup: Field 'calculatedOrder' doesn't exist on type 'QueryRoot'</code> — الاستعلام بعد <code>orderEditBegin</code> كان بينادي حقل مش موجود في سكيما شوبيفاي. بقى بينادي <code>node(id:)</code> العام زي <code>Order-Item-Remover</code>، والمطابقة مع المنتج الأصلي بالرقم العددي للـ ID. ⚠️ أي أوردر اتمسّ بمحاولة فاشلة قبل الإصلاح ده محتاج مراجعة يدوية على شوبيفاي (ممكن يكون فضل Unfulfilled بلا إعادة فلفلمنت).</li>
+        </ul>
+      </div>
       <div class="cl-entry">
         <span class="cl-tag new">جديد</span><b>v1.0.0</b> — 20-09-2026
         <ul>
@@ -510,8 +516,8 @@ a { color: inherit; }
 // ══════════════════════════════════════════════════════
 // §CONFIG
 // ══════════════════════════════════════════════════════
-const TOOL_VERSION = '1.0.0';
-const MIN_WORKER_VERSION = '1.0.0';
+const TOOL_VERSION = '1.0.1';
+const MIN_WORKER_VERSION = '1.0.1';
 const WORKER_URL = 'https://partial-delivery-worker.ecommoda-dev.workers.dev';
 const LS_SECRET  = 'partial_delivery_worker_secret';
 

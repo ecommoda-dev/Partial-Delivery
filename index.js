@@ -41,9 +41,21 @@
 //      tool = 'partial_delivery'
 //      type = 'remove_item' · 'remove_failed' · 'login' · 'logout'
 //    ممنوع أي `writeLog` بالقيم دي ينزل `main` قبل ما تتسجّل في المهارة.
+//
+// 🔴 **v1.0.1 (بلاغ #55619 · 20-09-2026)** — ② كانت بترمي دايمًا:
+//    "calculatedOrder_lookup: Field 'calculatedOrder' doesn't exist on
+//    type 'QueryRoot'". `calculatedOrder(id:)` **مش موجودة** كـ query
+//    field على QueryRoot أصلاً (اتأكّد بالاستقصاء الحي على السكيما)، والوصول
+//    ليها بعد `orderEditBegin` لازم يبقى عن طريق `node(id:)` العام + fragment
+//    — تفاصيل كاملة فوق `editRemoveLineItems`. **والأثر الحقيقي على
+//    #55619:** ① (fulfillmentCancel) نجحت وسابت الأوردر UNFULFILLED، وبعدين
+//    ② رمت الاستثناء قبل أي Order Edit — يعني الأوردر فضل واقف UNFULFILLED
+//    من غير إعادة فلفلمنت لحد ما التاب اتقفل. أي أوردر لمسته المحاولات
+//    الفاشلة قبل النشرة دي محتاج مراجعة يدوية (فلفلمنت جديد أو إعادة محاولة
+//    بعد النشر).
 // ══════════════════════════════════════════════════════════════
 const TOOL_NAME      = 'partial_delivery';
-const WORKER_VERSION = '1.0.0';
+const WORKER_VERSION = '1.0.1';
 
 // ══════════════════════════════════════════════════════════════
 // §CORS — Option B (قايمة صارمة)
@@ -378,6 +390,21 @@ async function cancelFulfillments(env, token, fulfillments, actions, costLog) {
 }
 
 // ─── §REMOVE::editRemoveLineItems ───
+// 🔴 v1.0.1 — بلاغ #55619 (20-09-2026): كانت بتنادي `calculatedOrder(id:)`
+//    كـ query جوّه QueryRoot — الحقل ده **مش موجود** أصلاً (اتأكّد بالاستقصاء
+//    الحي على سكيما 2026-07: `calculatedOrder` مش من فروع QueryRoot، وهو
+//    السبب الحرفي في فشل "calculatedOrder_lookup: Field 'calculatedOrder'
+//    doesn't exist on type 'QueryRoot'"). الوصول للـ CalculatedOrder بعد
+//    `orderEditBegin` بيبقى عن طريق `node(id:)` العام + fragment — نفس نمط
+//    `Order-Item-Remover/index.js` §SHOPIFY::removeLineItem بالحرف.
+//    ⚠️ ومعاها بند تاني: `CalculatedLineItem` مالوش أي حقل بيرجع لـ
+//    `LineItem` الأصلي (مفيش `lineItem { id }` — اتأكّد من الـ schema)،
+//    فالكود القديم كان أصلاً هيفشل تاني حتى لو الاستعلام صح. المطابقة
+//    الصح بالرقم العددي: شوبيفاي بتدّي الـ CalculatedLineItem بتاع عنصر
+//    موجود قبل التعديل **نفس الرقم بالظبط** اللي كان لـ LineItem الأصلي —
+//    بس النوع في الـ gid بيتغيّر (مقيس حيًا على #55619 20-09-2026: LineItem
+//    /17587028033858 → CalculatedLineItem/17587028033858، ونفس الملاحظة
+//    موجودة في Order-Item-Remover على #47101 26-08-2026).
 async function editRemoveLineItems(env, token, orderId, lineItemIds, restock, staffNote, actions, costLog) {
   // ① orderEditBegin
   const beginData = await shopifyGQL(env, token, `
@@ -390,18 +417,20 @@ async function editRemoveLineItems(env, token, orderId, lineItemIds, restock, st
   if (!calcOrderId) throw new Error('orderEditBegin: شوبيفاي ما رجّعتش calculatedOrder');
   actions.push('orderEditBegin×1');
 
-  // ② هات الـ calculated line items ومطابقتها بالـ line items الأصلية
+  // ② هات الـ calculated line items عن طريق node(id:) — ومطابقتها بالـ line
+  //    items الأصلية بالرقم العددي (راجع الشرح فوق الدالة)
   const calcData = await shopifyGQL(env, token, `
-    query CalcOrder($id: ID!) {
-      calculatedOrder(id: $id) { id lineItems(first: 50) { nodes { id quantity lineItem { id } } } }
+    query GetCalcLineItems($id: ID!) {
+      node(id: $id) { ... on CalculatedOrder { id lineItems(first: 50) { nodes { id sku quantity } } } }
     }`, { id: calcOrderId }, 'calculatedOrder_lookup', costLog);
-  const calcNodes = calcData.data?.calculatedOrder?.lineItems?.nodes || [];
-  const calcByOriginal = new Map(calcNodes.map(n => [n.lineItem?.id, n.id]));
+  const calcNodes = calcData.data?.node?.lineItems?.nodes || [];
 
   // ③ orderEditSetQuantity(quantity: 0) لكل عنصر مطلوب حذفه
   for (const liId of lineItemIds) {
-    const calcLiId = calcByOriginal.get(liId);
-    if (!calcLiId) throw new Error(`orderEditSetQuantity: مالقتش calculated line item للمنتج ${liId}`);
+    const targetNumericId = gidToNumeric(liId);
+    const match = calcNodes.find(n => gidToNumeric(n.id) === targetNumericId);
+    if (!match) throw new Error(`orderEditSetQuantity: مالقتش calculated line item للمنتج ${liId}`);
+    const calcLiId = match.id;
     const setData = await shopifyGQL(env, token, `
       mutation SetQty($id: ID!, $lineItemId: ID!, $quantity: Int!, $restock: Boolean) {
         orderEditSetQuantity(id: $id, lineItemId: $lineItemId, quantity: $quantity, restock: $restock) {
@@ -499,11 +528,20 @@ async function handleDiag(env, request) {
     const token = await getAccessToken(env);
     const data  = await shopifyGQL(env, token, `{ currentAppInstallation { accessScopes { handle } } }`, {}, 'diag_scopes');
     const scopes = (data.data?.currentAppInstallation?.accessScopes || []).map(s => s.handle);
-    const need = ['write_orders'];
+    // 🔴 v1.0.1 — كانت بتفحص write_orders، وده غلط: اتأكّد بالاستقصاء الحي
+    //    على السكيما إن orderEditBegin/SetQuantity/Commit مفيهمش write_orders
+    //    في صلاحياتهم المقبولة أصلاً — المطلوب write_order_edits +
+    //    read_order_edits (نفس ملاحظة Order-Item-Remover CLAUDE.md بالحرف).
+    //    fulfillmentCancel/Create محتاجين واحدة من صلاحيات fulfillment orders
+    //    (على الأغلب write_merchant_managed_fulfillment_orders + read_orders
+    //    لأداة بتدير الشحن داخليًا زي دي) — الاسم بالظبط بيتوقف على إعداد
+    //    التطبيق، فمش بيتفحص هنا؛ راجعه يدويًا لو الحذف رمى خطأ صلاحية رغم
+    //    نجاح البند ده.
+    const need = ['write_order_edits', 'read_order_edits'];
     const missing = need.filter(n => !scopes.includes(n));
     push(missing.length === 0, 'صلاحيات شوبيفاي',
          `${scopes.join(', ') || '—'}${missing.length ? ` — ناقص: ${missing.join(', ')}` : ''}`,
-         'orderEditCommit و fulfillmentCancel/Create محتاجين write_orders');
+         'orderEditBegin/SetQuantity/Commit محتاجين write_order_edits+read_order_edits (مش write_orders). fulfillmentCancel/Create محتاجين صلاحية fulfillment orders منفصلة — راجعها يدويًا لو الفحص ده OK والحذف برضه بيرمي خطأ صلاحية');
   } catch (e) {
     push(false, 'شوبيفاي', `FAILED: ${e.message}`);
   }

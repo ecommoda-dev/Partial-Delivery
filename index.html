@@ -1,0 +1,1172 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>التسليم الجزئي — Partial Delivery</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
+<style>
+/* ══════════════════════════════════════════════════════
+   §STYLES — :root توكنز + كل CSS الأداة
+   ══════════════════════════════════════════════════════ */
+:root {
+  --container-max: 1200px; /* Tier M — فيها تاب سجل */
+
+  --font-body: 'Noto Sans Arabic', sans-serif;
+  --font-mono: 'Noto Sans Arabic', sans-serif;
+
+  --bg:             #f3f4f6;
+  --surface:        #ffffff;
+  --surface-2:      #f9fafb;
+  --surface-hover:  #f3f4f6;
+  --border:         #e5e7eb;
+  --border-light:   #eef0f3;
+  --border-strong:  #d1d5db;
+
+  --text-primary:   #111827;
+  --text-secondary: #6b7280;
+  --text-muted:     #6b7280;
+  --text-mid:       #374151;
+  --on-accent:      #ffffff;
+
+  --accent:               #2563eb;
+  --accent-light:         #eff6ff;
+  --accent-border:        #bfdbfe;
+  --accent-hover:         #1d4ed8;
+  --accent-hover-border:  #1e40af;
+
+  --green:       #16a34a;
+  --green-dark:  #15803d;
+  --green-light: #f0fdf4;
+
+  --red:       #dc2626;
+  --red-dark:  #b91c1c;
+  --red-light: #fef2f2;
+
+  --amber:        #d97706;
+  --amber-dark:   #92400e;
+  --amber-light:  #fffbeb;
+  --amber-border: #fde68a;
+
+  --purple:       #7c3aed;
+  --purple-dark:  #5b21b6;
+  --purple-light: #f5f3ff;
+
+  --neutral-dark: #4b5563;
+
+  --radius:    10px;
+  --radius-sm: 7px;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; direction: rtl; font-family: var(--font-body); background: var(--bg);
+  color: var(--text-primary); font-size: 14px; line-height: 1.6;
+}
+.container { max-width: var(--container-max); margin: 0 auto; padding: 0 16px 40px; }
+a { color: inherit; }
+
+/* ── §SHELL: header ── */
+.app-header {
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 14px 16px; display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; position: sticky; top: 0; z-index: 300;
+}
+.app-header-title { display: flex; align-items: center; gap: 10px; }
+.app-header-title .icon { font-size: 24px; }
+.app-header-title .txt .name { font-weight: 700; font-size: 16px; }
+.app-header-title .txt .desc { font-size: 12px; color: var(--text-secondary); }
+.app-header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hbtn {
+  border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-sm);
+  padding: 7px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; color: var(--text-primary);
+  font-family: var(--font-body); display: inline-flex; align-items: center; gap: 6px;
+}
+.hbtn:hover { background: var(--surface-hover); }
+.hbtn.warn { border-color: var(--amber); color: var(--amber); background: var(--amber-light); display: none; }
+
+/* ── buttons ── */
+.btn {
+  border: none; border-radius: var(--radius-sm); padding: 10px 18px; font-size: 13.5px;
+  font-weight: 700; cursor: pointer; font-family: var(--font-body); display: inline-flex;
+  align-items: center; gap: 6px; justify-content: center;
+}
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary { background: var(--accent); color: var(--on-accent); }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.btn-ghost { background: var(--surface); color: var(--text-primary); border: 1px solid var(--border); }
+.btn-ghost:hover:not(:disabled) { background: var(--surface-hover); }
+.btn-green { background: var(--green); color: var(--on-accent); }
+.btn-green:hover:not(:disabled) { background: var(--green-dark); }
+.btn-red { background: var(--red); color: var(--on-accent); }
+.btn-red:hover:not(:disabled) { background: var(--red-dark); }
+.btn-outline { background: transparent; color: var(--accent); border: 1px solid var(--accent-border); }
+.btn-sm { padding: 6px 12px; font-size: 12px; }
+.order-link, .order-num { font-family: var(--font-mono); direction: ltr; display: inline-block; color: var(--accent); text-decoration: none; font-weight: 700; }
+.order-num { color: var(--text-primary); }
+
+/* ── cards ── */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; margin-bottom: 16px; }
+.card h3 { margin: 0 0 12px; font-size: 15px; }
+
+/* ── main tabs ── */
+.main-tabs-bar { display: flex; gap: 0; margin: 18px 0 16px; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); }
+.main-tab-btn {
+  flex: 1; padding: 12px; text-align: center; font-weight: 700; font-size: 13.5px;
+  background: var(--surface); border: none; border-inline-start: 1px solid var(--border);
+  cursor: pointer; color: var(--text-secondary); font-family: var(--font-body);
+}
+.main-tab-btn:first-child { border-inline-start: none; }
+.main-tab-btn.active { background: var(--accent-light); color: var(--accent); border-bottom: 3px solid var(--accent); }
+
+/* ── scan / search ── */
+.pd-scan-row { display: flex; gap: 10px; }
+.pd-scan-row input {
+  flex: 1; padding: 12px 14px; border-radius: var(--radius-sm); border: 1.5px solid var(--border);
+  font-size: 15px; font-family: var(--font-mono); direction: ltr; text-align: right;
+}
+.pd-scan-row input.has-value { border-color: var(--accent-border); background: var(--accent-light); }
+.pd-scan-row input:focus { outline: none; border-color: var(--accent); }
+
+/* ── order summary ── */
+.pd-order-hdr { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+.pd-badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 700; }
+.pd-badge.ok    { background: var(--green-light);  color: var(--green-dark); }
+.pd-badge.bad   { background: var(--red-light);    color: var(--red-dark); }
+.pd-badge.mono  { font-family: var(--font-mono); direction: ltr; background: var(--surface-2); border: 1px solid var(--border-strong); }
+
+.pd-elig-banner { padding: 10px 14px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; margin-bottom: 14px; }
+.pd-elig-banner.ok  { background: var(--green-light); color: var(--green-dark); border: 1px solid var(--green); }
+.pd-elig-banner.bad { background: var(--red-light);   color: var(--red-dark);   border: 1px solid var(--red); }
+
+/* ── line items ── */
+.pd-item { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 8px; }
+.pd-item.removed { opacity: .45; }
+.pd-item img { width: 46px; height: 46px; object-fit: cover; border-radius: 6px; background: var(--surface-2); flex-shrink: 0; }
+.pd-item .info { flex: 1; min-width: 0; }
+.pd-item .info .t { font-weight: 700; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-item .info .s { font-size: 12px; color: var(--text-secondary); font-family: var(--font-mono); direction: ltr; text-align: right; }
+.pd-item .qty { font-family: var(--font-mono); font-weight: 700; font-size: 13px; color: var(--text-mid); white-space: nowrap; }
+.pd-item input[type="checkbox"] { width: 20px; height: 20px; cursor: pointer; accent-color: var(--red); }
+
+.pd-opts { display: flex; flex-direction: column; gap: 10px; margin: 16px 0; }
+.pd-opts label { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.pd-opts textarea, .pd-opts input[type="text"] {
+  width: 100%; padding: 9px 12px; border-radius: var(--radius-sm); border: 1.5px solid var(--border);
+  font-family: var(--font-body); font-size: 13.5px; resize: vertical;
+}
+
+/* ── result 4-state ── */
+.pd-result { padding: 14px; border-radius: var(--radius-sm); margin-top: 14px; }
+.pd-result.success { background: var(--green-light); border: 1px solid var(--green); }
+.pd-result.warning  { background: var(--amber-light); border: 1px solid var(--amber); }
+.pd-result.error    { background: var(--red-light);   border: 1px solid var(--red); }
+.pd-result.already  { background: var(--surface-2);   border: 1px solid var(--border-strong); }
+.pd-result .badge { font-weight: 800; font-size: 13.5px; margin-bottom: 6px; display: block; }
+.pd-result.success .badge { color: var(--green-dark); }
+.pd-result.warning  .badge { color: var(--amber-dark); }
+.pd-result.error    .badge { color: var(--red-dark); }
+.pd-result.already  .badge { color: var(--neutral-dark); }
+.pd-result ul { margin: 6px 0 0; padding-inline-start: 18px; font-size: 12.5px; }
+
+/* ── data table (log tab) ── */
+.unified-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: visible; }
+.section-divider { border-top: 1px solid var(--border); }
+.log-toolbar { display: flex; gap: 10px; padding: 14px; flex-wrap: wrap; align-items: center; }
+.log-toolbar .srch-wrap { position: relative; flex: 1; min-width: 200px; }
+.log-toolbar .srch-wrap input {
+  width: 100%; padding: 9px 12px 9px 34px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); font-size: 13px;
+}
+.log-toolbar .srch-wrap input.has-value { border-color: var(--accent-border); background: var(--accent-light); }
+.log-toolbar .srch-wrap .ic { position: absolute; right: auto; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-muted); }
+.results-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-top: 1px solid var(--border); font-size: 13px; }
+.results-count { font-weight: 800; font-size: 14px; background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 6px; padding: 3px 10px; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.data-table th, .data-table td { padding: 9px 10px; border-bottom: 1px solid var(--border-light); text-align: right; }
+.data-table th { background: var(--surface-2); font-weight: 700; border-bottom: 2px solid var(--border); position: sticky; top: 57px; }
+.result-chip { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 700; }
+.result-chip.success { background: var(--green-light); color: var(--green-dark); }
+.result-chip.warning  { background: var(--amber-light); color: var(--amber-dark); }
+.result-chip.error    { background: var(--red-light); color: var(--red-dark); }
+.result-chip.rejected, .result-chip.already { background: var(--surface-2); color: var(--neutral-dark); }
+.pagination-row { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 14px; }
+.page-info { font-size: 13px; color: var(--text-secondary); font-family: var(--font-mono); padding: 0 8px; }
+.page-btn { padding: 6px 14px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); font-size: 13px; font-weight: 600; cursor: pointer; font-family: var(--font-body); }
+.page-btn:disabled { opacity: .4; cursor: not-allowed; }
+.export-warn { margin: 0 14px 12px; padding: 10px 14px; border-radius: 9px; background: var(--amber-light); border: 1px solid var(--amber); color: var(--amber-dark); font-size: 13px; font-weight: 600; }
+
+/* ── z-index sheet: login 500 · modals 600 · toast 9999 ── */
+
+/* ── login ── */
+.login-overlay {
+  position: fixed; inset: 0; background: rgba(17,24,39,.55); display: flex;
+  align-items: center; justify-content: center; z-index: 500; padding: 16px;
+}
+.login-overlay.hidden { display: none; }
+.login-card { position: relative; background: var(--surface); border-radius: 16px; padding: 30px 26px; width: 100%; max-width: 380px; text-align: center; }
+.login-settings-btn { position: absolute; top: 14px; left: 14px; border: none; background: none; cursor: pointer; font-size: 18px; padding: 6px; border-radius: 50%; }
+.login-settings-btn.missing { color: var(--red); }
+.login-settings-btn.ready { color: var(--green); }
+.login-icon { font-size: 40px; margin-bottom: 6px; }
+.login-title { font-weight: 800; font-size: 18px; }
+.login-desc { font-size: 12.5px; color: var(--text-secondary); margin-top: 4px; }
+.login-sub { font-size: 12.5px; color: var(--amber-dark); min-height: 16px; margin: 10px 0 4px; }
+.login-field { margin: 14px 0; text-align: right; }
+.login-field select {
+  width: 100%; padding: 11px 12px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); font-size: 14px;
+  font-family: var(--font-body);
+}
+.login-status { font-size: 12px; margin-top: 6px; min-height: 14px; }
+.login-status.warn { color: var(--amber-dark); }
+.login-status.error { color: var(--red-dark); }
+.login-status.info { color: var(--text-secondary); }
+.login-alert { background: var(--red-light); color: var(--red-dark); border: 1px solid var(--red); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; margin-top: 10px; display: none; }
+.login-alert.show { display: block; }
+.pin-zone { display: none; margin-top: 14px; }
+.pin-zone.visible { display: block; }
+.pin-slots { display: flex; justify-content: center; gap: 10px; margin: 10px 0; }
+.pin-slot { width: 34px; height: 40px; border: 2px solid var(--border-strong); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 800; }
+.pin-slot.filled { border-color: var(--accent); }
+.pin-slot.error { border-color: var(--red); animation: none; }
+.pin-slots.shake { animation: pinShake .4s; }
+@keyframes pinShake { 10%,90%{transform:translateX(-2px)} 20%,80%{transform:translateX(4px)} 30%,50%,70%{transform:translateX(-8px)} 40%,60%{transform:translateX(8px)} }
+.pin-keypad { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin-top: 10px; }
+.pin-key { padding: 12px; font-size: 17px; font-weight: 700; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; font-family: var(--font-mono); }
+.pin-key:hover { background: var(--surface-hover); }
+.login-primary { display: none; margin-top: 14px; width: 100%; }
+.login-primary.visible { display: inline-flex; }
+.login-version { font-size: 11px; color: var(--text-muted); margin-top: 16px; }
+
+/* ── modals ── */
+.eco-overlay { position: fixed; inset: 0; background: rgba(17,24,39,.5); display: none; align-items: center; justify-content: center; z-index: 600; padding: 16px; }
+.eco-overlay.open { display: flex; }
+.eco-modal { background: var(--surface); border-radius: 14px; width: calc(var(--container-max) * .9); max-width: 94vw; max-height: 86vh; display: flex; flex-direction: column; }
+.eco-modal-hdr { flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; padding: 16px 18px; border-bottom: 1px solid var(--border); }
+.eco-modal-hdr h3 { margin: 0; font-size: 15.5px; }
+.eco-modal-body { overflow-y: auto; padding: 18px; }
+.modal-close-x { border: 1.5px solid var(--red); background: var(--red-light); color: var(--red-dark); border-radius: 8px; width: 30px; height: 30px; cursor: pointer; font-size: 15px; font-weight: 800; }
+.settings-field { margin-bottom: 14px; }
+.settings-label { display: block; font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+.settings-input { width: 100%; padding: 10px 12px; border-radius: var(--radius-sm); border: 1.5px solid var(--border); font-family: var(--font-mono); direction: ltr; text-align: right; font-size: 13px; }
+.about-sec { border-bottom: 1px solid var(--border-light); }
+.about-sec summary { cursor: pointer; padding: 12px 0; font-weight: 700; }
+.about-sec-body { padding: 0 0 16px; font-size: 13px; }
+.about-sec-body h4 { color: var(--accent); margin: 12px 0 6px; font-size: 13.5px; }
+.about-sec-body table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 8px 0; }
+.about-sec-body table th, .about-sec-body table td { border: 1px solid var(--border); padding: 6px 8px; text-align: right; }
+.about-sec-body ol { padding-inline-start: 20px; }
+.about-sec-body ul { padding-inline-start: 18px; }
+.cl-entry { margin-bottom: 14px; }
+.cl-tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; margin-inline-end: 6px; }
+.cl-tag.new    { background: var(--green-light); color: var(--green-dark); }
+.cl-tag.fix    { background: var(--red-light);   color: var(--red-dark); }
+.cl-tag.change { background: var(--amber-light);  color: var(--amber-dark); }
+.confirm-lines { text-align: right; margin: 10px 0; padding: 0; list-style: none; }
+.confirm-lines li { padding: 6px 10px; border-radius: 7px; background: var(--surface-2); margin-bottom: 6px; font-size: 13px; }
+.confirm-lines li.soft { color: var(--text-secondary); }
+.confirm-actions { display: flex; gap: 10px; margin-top: 16px; justify-content: flex-start; }
+
+/* ── multi-select filter (compact) ── */
+.ms-wrap { position: relative; }
+.ms-btn { padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); font-size: 12.5px; font-weight: 700; cursor: pointer; font-family: var(--font-body); }
+.ms-btn.active { border-color: var(--accent); color: var(--accent); }
+.ms-list { position: absolute; top: 100%; margin-top: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.12); z-index: 400; min-width: 200px; max-height: 260px; overflow-y: auto; display: none; }
+.ms-list.open { display: block; }
+.ms-ftr-top { padding: 8px 10px; border-bottom: 1px solid var(--border-light); }
+.ms-ftr-top button { font-size: 11.5px; color: var(--red); background: none; border: none; cursor: pointer; font-weight: 700; }
+.ms-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; font-size: 12.5px; cursor: pointer; }
+.ms-item:hover { background: var(--surface-hover); }
+
+/* ── toast ── */
+.toast-container { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
+.toast { padding: 12px 18px; border-radius: 10px; color: var(--on-accent); font-size: 13px; font-weight: 600; box-shadow: 0 6px 18px rgba(0,0,0,.2); max-width: 90vw; }
+.toast-success { background: var(--green); }
+.toast-error   { background: var(--red); }
+.toast-warn, .toast-warning { background: var(--amber); }
+.toast-info, .toast-neutral { background: var(--neutral-dark); }
+
+.q-empty { text-align: center; padding: 30px; color: var(--text-secondary); }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════
+     §SHELL — header + settings + changelog + about + toast
+     ══════════════════════════════════════════════════════ -->
+<header class="app-header">
+  <div class="app-header-title">
+    <div class="icon">📦</div>
+    <div class="txt">
+      <div class="name">التسليم الجزئي</div>
+      <div class="desc" id="sessionInfo"></div>
+    </div>
+  </div>
+  <div class="app-header-actions">
+    <button class="hbtn warn" id="verStaleBtn" onclick="showWorkerStale()">⚠️ الـ Worker نسخة قديمة</button>
+    <button class="hbtn" onclick="openAbout()">ℹ️ عن الأداة</button>
+    <button class="hbtn" id="verBtn" onclick="openChangelog()">v1.0.0 📋</button>
+    <button class="hbtn" onclick="doLogout()" aria-label="تسجيل الخروج">🚪 خروج</button>
+    <button class="hbtn" onclick="openSettings()">⚙️ الإعدادات</button>
+  </div>
+</header>
+
+<div class="container">
+  <div class="main-tabs-bar">
+    <button class="main-tab-btn active" id="tabTool" onclick="switchMainTab('tool')">📦 تسليم جزئي</button>
+    <button class="main-tab-btn" id="tabLog" onclick="switchMainTab('log')">🧾 السجل</button>
+  </div>
+
+  <!-- ══════════════ §TOOL ══════════════ -->
+  <div id="toolTabContent">
+    <div class="card">
+      <h3>🔎 ابحث عن الأوردر</h3>
+      <div class="pd-scan-row">
+        <input type="text" id="scanInput" placeholder="رقم الأوردر أو سكان الـ Order ID" autofocus>
+        <button class="btn btn-primary" onclick="handleScan()">بحث</button>
+      </div>
+    </div>
+
+    <div id="orderCard" style="display:none;"></div>
+  </div>
+
+  <!-- ══════════════ §LOG ══════════════ -->
+  <div id="logTabContent" style="display:none;">
+    <div class="unified-section">
+      <div class="log-toolbar">
+        <div class="srch-wrap">
+          <span class="ic">🔍</span>
+          <input type="text" id="logSearch" placeholder="ابحث برقم الأوردر أو الملاحظات">
+        </div>
+        <div class="ms-wrap">
+          <button class="ms-btn" id="msBtn-employee" onclick="msToggle('employee')">👤 الموظف</button>
+          <div class="ms-list" id="msList-employee"></div>
+        </div>
+        <div class="ms-wrap">
+          <button class="ms-btn" id="msBtn-type" onclick="msToggle('type')">📋 النوع</button>
+          <div class="ms-list" id="msList-type"></div>
+        </div>
+        <input type="date" id="logDateFrom" onclick="this.showPicker&&this.showPicker();" onchange="onLogFilterChange()">
+        <input type="date" id="logDateTo" onclick="this.showPicker&&this.showPicker();" onchange="onLogFilterChange()">
+        <button class="btn btn-outline btn-sm" onclick="exportLogXLSX()">⬇️ تصدير XLSX</button>
+      </div>
+      <div class="export-warn" id="logExportWarn" style="display:none;"></div>
+      <div class="section-divider"></div>
+      <div style="overflow-x:auto;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>الوقت</th><th>الأوردر</th><th>النوع</th><th>النتيجة</th><th>الموظف</th><th>ملاحظات</th>
+            </tr>
+          </thead>
+          <tbody id="logTableBody"></tbody>
+        </table>
+      </div>
+      <div class="results-row">
+        <span>النتائج: <span class="results-count" id="logResultsCount">—</span></span>
+      </div>
+      <div class="pagination-row" id="paginationRow" style="display:none;">
+        <button class="page-btn" id="btnPrevPage" onclick="goPage(-1)">→ السابق</button>
+        <span class="page-info" id="pageInfo"></span>
+        <button class="page-btn" id="btnNextPage" onclick="goPage(1)">التالي ←</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ §SETTINGS ══════════════ -->
+<div class="eco-overlay" id="settingsOverlay">
+  <div class="eco-modal" style="max-width:460px;">
+    <div class="eco-modal-hdr"><h3>⚙️ الإعدادات</h3><button class="modal-close-x" onclick="closeSettings()">✕</button></div>
+    <div class="eco-modal-body">
+      <div class="settings-field">
+        <label class="settings-label">WORKER SECRET</label>
+        <input type="text" class="settings-input" id="setSecret">
+      </div>
+      <button class="btn btn-primary" style="width:100%;" onclick="saveSettings()">حفظ</button>
+      <div class="settings-field" style="border-top:1.5px solid var(--border-light);padding-top:12px;margin-top:16px;">
+        <label class="settings-label">فحص النظام</label>
+        <button class="btn btn-outline btn-sm" onclick="runDiag()">🩺 افحص الأداة والاتصال</button>
+        <div id="diagResult" style="margin-top:10px;font-size:12px;line-height:1.7;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ §CHANGELOG ══════════════ -->
+<div class="eco-overlay" id="changelogOverlay">
+  <div class="eco-modal" style="max-width:560px;">
+    <div class="eco-modal-hdr"><h3>📋 سجل الإصدارات</h3><button class="modal-close-x" onclick="closeChangelog()">✕</button></div>
+    <div class="eco-modal-body">
+      <div class="cl-entry">
+        <span class="cl-tag new">جديد</span><b>v1.0.0</b> — 20-09-2026
+        <ul>
+          <li>الإطلاق الأول: بحث عن أوردر بالاسم أو بالـ Order ID، اختيار منتج (أو أكتر) وحذفه من الأوردر مع الحفاظ على الفلفلمنت لباقي المنتجات.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ §ABOUT ══════════════ -->
+<div class="eco-overlay" id="aboutOverlay">
+  <div class="eco-modal">
+    <div class="eco-modal-hdr"><h3>ℹ️ عن الأداة — التسليم الجزئي</h3><button class="modal-close-x" onclick="closeAbout()">✕</button></div>
+    <div class="eco-modal-body">
+      <details class="about-sec" open>
+        <summary>📋 وصف الأداة</summary>
+        <div class="about-sec-body">
+          <p>الأداة دي لأوردر <b>S1 = Shipped</b> (أو <b>In-Return</b>) ومنتجاته <b>Fulfilled</b>،
+             واتضح إن منتج أو أكتر منه مش هيتسلّم فعليًا. الأداة بتشيل المنتج(ات) دي من الأوردر
+             بلا ما تلمس الباقي.</p>
+          <h4>مين بيستخدمها</h4>
+          <p>موظفو الشحن والتحصيل — بعد ما يتأكد إن جزء من الشحنة مش هيوصل (ضاع، اتلف، رجع من العميل جزئيًا).</p>
+          <h4>إزاي بتشتغل</h4>
+          <ol>
+            <li>سجّل الدخول باسمك واختر الـ PIN بتاعك.</li>
+            <li>ابحث عن الأوردر برقمه (مثلًا 1780 أو #1780) أو اسكن الـ Order ID الطويل من الباركود.</li>
+            <li>الأداة بتتأكد إن الأوردر S1=Shipped/In-Return وFulfilled — لو مش كده بترفض بوضوح.</li>
+            <li>اختر المنتج(ات) المطلوب حذفها من قايمة المنتجات.</li>
+            <li>حدّد لو عايز ترجّع الكمية للمخزون (Restock) واكتب سبب لو حابب.</li>
+            <li>اضغط «شيل المنتجات المحددة» وأكّد في النافذة اللي بتقول العدد بالظبط.</li>
+            <li>الأداة بتلغي الفلفلمنت الحالي، تشيل المنتج(ات) من الأوردر (Order Edit)، وترجّع تفلفل الباقي تلقائيًا.</li>
+          </ol>
+          <h4>الـ Endpoints الرئيسية</h4>
+          <table>
+            <tr><th>action</th><th>الوصف</th></tr>
+            <tr><td>lookup_order</td><td>قراءة أوردر بالاسم أو بالـ ID + فحص الأهلية</td></tr>
+            <tr><td>remove_items</td><td>الفعل الأساسي — إلغاء فلفلمنت → تعديل أوردر → إعادة فلفلمنت (كتابة)</td></tr>
+            <tr><td>get_logs / get_logs_count / get_logs_export</td><td>تاب السجل</td></tr>
+          </table>
+        </div>
+      </details>
+      <details class="about-sec">
+        <summary>🔧 تشريح الكود</summary>
+        <div class="about-sec-body">
+          <h4>FEATURE MAP</h4>
+          <ul>
+            <li>§SCAN — قراءة مربع البحث بنمط السكانر (دفعة أحرف سريعة = سكانر)</li>
+            <li>§ORDER-JS — عرض الأوردر والمنتجات وحالة الأهلية</li>
+            <li>§REMOVE-JS — تأكيد الحذف والنداء الفعلي وعرض الحالات الأربعة</li>
+            <li>§LOG-JS — جدول السجل والفلاتر والتصدير</li>
+          </ul>
+          <h4>KEY VARIABLES</h4>
+          <ul>
+            <li><code>LS_SECRET = 'partial_delivery_worker_secret'</code></li>
+            <li><code>MIN_WORKER_VERSION</code> — أقل نسخة Worker مقبولة</li>
+          </ul>
+          <h4>NOTES / QUIRKS</h4>
+          <ul>
+            <li>الأداة مستقلة عن هب مركز الشحن والتحصيل — Worker وريبو خاصين بيها، والبطاقة في الهب بترجع هنا فقط.</li>
+            <li>الحذف عملية لا رجعة فيها — نافذة تأكيد إلزامية قبل التنفيذ.</li>
+          </ul>
+        </div>
+      </details>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ §CONFIRM ══════════════ -->
+<div class="eco-overlay" id="confirmOverlay">
+  <div class="eco-modal" style="max-width:420px;">
+    <div class="eco-modal-hdr"><h3 id="confirmHdr">⚠️ تأكيد</h3><button class="modal-close-x" onclick="closeConfirm(false)">✕</button></div>
+    <div class="eco-modal-body">
+      <p id="confirmLead"></p>
+      <ul class="confirm-lines" id="confirmLines"></ul>
+      <div class="confirm-actions">
+        <button class="btn btn-red" id="confirmOkBtn" onclick="closeConfirm(true)"></button>
+        <button class="btn btn-ghost" onclick="closeConfirm(false)">إلغاء</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ §LOGIN ══════════════ -->
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-card">
+    <button class="login-settings-btn missing" id="loginSettingsBtn" onclick="openSettings()">⚙️</button>
+    <div class="login-icon">📦</div>
+    <div class="login-title">التسليم الجزئي</div>
+    <div class="login-desc">حذف منتج من أوردر مشحون بلا ما تلمس الباقي</div>
+    <div class="login-sub" id="loginSub"></div>
+    <div class="login-field">
+      <select id="loginSelect" onchange="handleEmployeeChange()" disabled>
+        <option value="">اختر اسمك للمتابعة</option>
+      </select>
+      <div class="login-status warn" id="loginStatus"></div>
+    </div>
+    <div class="login-alert" id="loginAlert"></div>
+    <div class="pin-zone" id="pinZone">
+      <div class="pin-slots" id="pinSlots"></div>
+      <div class="pin-keypad" id="pinKeypad"></div>
+    </div>
+    <button class="btn btn-primary login-primary" id="loginPrimaryBtn" onclick="handlePrimaryLoginAction()">دخول</button>
+    <div class="login-version" id="loginVersionText"></div>
+  </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+// ══════════════════════════════════════════════════════
+// §CONFIG
+// ══════════════════════════════════════════════════════
+const TOOL_VERSION = '1.0.0';
+const MIN_WORKER_VERSION = '1.0.0';
+const WORKER_URL = 'https://partial-delivery-worker.ecommoda-dev.workers.dev';
+const LS_SECRET  = 'partial_delivery_worker_secret';
+
+function esc(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function getConfig() { return { url: WORKER_URL, secret: localStorage.getItem(LS_SECRET) || '' }; }
+function isConfigured() { return !!getConfig().secret; }
+
+const API_TIMEOUT_MS = 90000;
+async function apiRequest(action, opts = {}) {
+  const cfg = getConfig();
+  if (!cfg.secret) { openSettings(); throw new Error('الإعدادات غير مكتملة — أدخل الـ WORKER SECRET'); }
+  const base = cfg.url.replace(/\/$/, '');
+  let url = `${base}/?action=${encodeURIComponent(action)}`;
+  if (opts.params) for (const [k, v] of Object.entries(opts.params)) if (v !== undefined && v !== null && v !== '') url += `&${k}=${encodeURIComponent(v)}`;
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), API_TIMEOUT_MS);
+  let resp, text;
+  try {
+    resp = await fetch(url, {
+      method: opts.method || 'GET',
+      headers: { 'Authorization': `Bearer ${cfg.secret}`, ...(opts.body ? { 'Content-Type': 'application/json' } : {}) },
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      signal: ctrl.signal,
+    });
+    text = await resp.text();
+  } catch (e) {
+    if (e.name === 'AbortError')
+      throw new Error(`الـ Worker ما ردّش خلال ${API_TIMEOUT_MS/1000} ثانية — راجع تاب السجل قبل ما تعيد المحاولة: ممكن تكون العملية تمّت`);
+    throw new Error(`تعذّر الوصول للـ Worker (شبكة أو CORS) — ${e.message}`);
+  } finally { clearTimeout(timer); }
+
+  let data;
+  try { data = JSON.parse(text); } catch { throw new Error(`رد غير متوقع من الـ Worker: ${text.slice(0,150)}`); }
+  if (!resp.ok && !data) throw new Error(`الـ Worker رجّع خطأ ${resp.status}`);
+  return data;
+}
+async function apiGet(action, params = {}) { return apiRequest(action, { method: 'GET', params }); }
+async function apiPost(action, body = {}) { return apiRequest(action, { method: 'POST', body }); }
+
+// ══════════════════════════════════════════════════════
+// §SHELL-JS
+// ══════════════════════════════════════════════════════
+function openSettings() { document.getElementById('settingsOverlay').classList.add('open'); document.getElementById('setSecret').value = getConfig().secret; }
+function closeSettings() { document.getElementById('settingsOverlay').classList.remove('open'); }
+function saveSettings() {
+  const v = document.getElementById('setSecret').value.trim();
+  localStorage.setItem(LS_SECRET, v);
+  updateLoginSettingsBtn();
+  closeSettings();
+  showToast('اتحفظت الإعدادات ✓', 'success');
+  loadEmployeesList();
+  checkWorkerVersion();
+}
+function updateLoginSettingsBtn() {
+  const btn = document.getElementById('loginSettingsBtn');
+  if (!btn) return;
+  const ready = isConfigured();
+  btn.classList.toggle('ready', ready);
+  btn.classList.toggle('missing', !ready);
+}
+function openChangelog() { document.getElementById('changelogOverlay').classList.add('open'); }
+function closeChangelog() { document.getElementById('changelogOverlay').classList.remove('open'); }
+function openAbout() { document.getElementById('aboutOverlay').classList.add('open'); }
+function closeAbout() { document.getElementById('aboutOverlay').classList.remove('open'); }
+
+function showToast(msg, type = 'neutral', ms = 4000) {
+  const c = document.getElementById('toastContainer');
+  const t = document.createElement('div');
+  t.className = `toast toast-${type}`;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => t.remove(), ms);
+}
+
+function playBeep(kind) {
+  try {
+    const ctxA = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctxA.createOscillator(), g = ctxA.createGain();
+    o.connect(g); g.connect(ctxA.destination);
+    o.frequency.value = kind === 'error' ? 220 : kind === 'warn' ? 330 : 660;
+    g.gain.value = 0.05;
+    o.start(); setTimeout(() => { o.stop(); ctxA.close(); }, 140);
+  } catch {}
+}
+
+function cmpVersion(a, b) {
+  const pa = String(a).replace(/^v/, '').split('.').map(Number);
+  const pb = String(b).replace(/^v/, '').split('.').map(Number);
+  for (let i = 0; i < 3; i++) { const d = (pa[i]||0) - (pb[i]||0); if (d) return d; }
+  return 0;
+}
+let workerVersion = null;
+async function checkWorkerVersion() {
+  if (!isConfigured()) return;
+  try {
+    const d = await apiGet('get_config');
+    workerVersion = d.version || null;
+    const stale = workerVersion && cmpVersion(workerVersion, MIN_WORKER_VERSION) < 0;
+    document.getElementById('verStaleBtn').style.display = stale ? '' : 'none';
+  } catch {}
+}
+function showWorkerStale() {
+  showToast(`الـ Worker نسخته ${workerVersion} والواجهة محتاجة ${MIN_WORKER_VERSION} على الأقل — راجع Deployments وPromote في كلاودفلير.`, 'error', 7000);
+}
+
+async function runDiag() {
+  const el = document.getElementById('diagResult');
+  el.innerHTML = 'جاري الفحص...';
+  try {
+    const d = await apiGet('diag');
+    el.innerHTML = (d.checks || []).map(c => `<div>${c.ok ? '✅' : '❌'} <b>${esc(c.label)}</b>: ${esc(c.detail || '')}</div>`).join('');
+  } catch (e) { el.innerHTML = `<span style="color:var(--red)">فشل الفحص: ${esc(e.message)}</span>`; }
+}
+
+// ── generic confirm ──
+let _confirmResolve = null;
+function askConfirm({ header, lead, lines, okLabel }) {
+  document.getElementById('confirmHdr').textContent = header;
+  document.getElementById('confirmLead').textContent = lead;
+  document.getElementById('confirmLines').innerHTML = (lines || []).map(l => `<li class="${l.soft ? 'soft' : ''}">${esc(l.text)}</li>`).join('');
+  document.getElementById('confirmOkBtn').textContent = okLabel;
+  document.getElementById('confirmOverlay').classList.add('open');
+  return new Promise(resolve => { _confirmResolve = resolve; });
+}
+function closeConfirm(result) {
+  document.getElementById('confirmOverlay').classList.remove('open');
+  if (_confirmResolve) { _confirmResolve(result); _confirmResolve = null; }
+}
+
+function switchMainTab(tab) {
+  document.getElementById('toolTabContent').style.display = tab === 'tool' ? '' : 'none';
+  document.getElementById('logTabContent').style.display  = tab === 'log' ? '' : 'none';
+  document.getElementById('tabTool').classList.toggle('active', tab === 'tool');
+  document.getElementById('tabLog').classList.toggle('active', tab === 'log');
+  if (tab === 'log') { syncMsItems(); fetchLog(); }
+}
+
+document.addEventListener('keydown', (e) => {
+  const settingsOpen = document.getElementById('settingsOverlay').classList.contains('open');
+  if (e.key === 'Escape') {
+    if (settingsOpen) closeSettings();
+    document.getElementById('aboutOverlay').classList.remove('open');
+    document.getElementById('changelogOverlay').classList.remove('open');
+    document.getElementById('confirmOverlay').classList.remove('open');
+  }
+});
+
+// ══════════════════════════════════════════════════════
+// §AUTH-JS
+// ══════════════════════════════════════════════════════
+let currentEmployee = null; // { username, displayName } — JS memory only, never localStorage
+let loginMode = 'employee';
+let pinDigits = [];
+let isLoginBusy = false;
+let autoLoginTimer = null;
+
+async function loadEmployeesList() {
+  const sel = document.getElementById('loginSelect');
+  const status = document.getElementById('loginStatus');
+  if (!isConfigured()) { status.textContent = 'الإعدادات غير مكتملة — افتح الإعدادات أولاً.'; status.className = 'login-status warn'; return; }
+  status.textContent = 'جارٍ تحميل قائمة الموظفين...'; status.className = 'login-status info';
+  sel.disabled = true;
+  try {
+    const d = await apiGet('get_employees');
+    const emps = d.employees || [];
+    sel.innerHTML = '<option value="">اختر اسمك للمتابعة</option>' + emps.map(e => `<option value="${esc(e.username)}">${esc(e.display_name)}</option>`).join('');
+    sel.disabled = false;
+    status.textContent = emps.length ? '' : 'لا يوجد موظفون نشطون.';
+    status.className = emps.length ? 'login-status info' : 'login-status warn';
+  } catch (e) {
+    status.textContent = `تعذّر تحميل الموظفين: ${e.message}`; status.className = 'login-status error';
+    showLoginAlert(e.message);
+  }
+}
+
+function showLoginAlert(msg) {
+  const a = document.getElementById('loginAlert');
+  a.textContent = msg; a.classList.add('show');
+}
+function hideLoginAlert() { document.getElementById('loginAlert').classList.remove('show'); }
+
+function renderLoginMode(mode) {
+  loginMode = mode;
+  const pinZone = document.getElementById('pinZone');
+  const primary = document.getElementById('loginPrimaryBtn');
+  const sub = document.getElementById('loginSub');
+  pinZone.classList.toggle('visible', mode !== 'employee');
+  primary.classList.toggle('visible', mode !== 'employee');
+  pinDigits = []; renderPinSlots();
+  renderPinKeypad();
+  if (mode === 'employee') { sub.textContent = ''; primary.textContent = 'دخول'; }
+  else if (mode === 'existing') { sub.textContent = 'أدخل الـ PIN بتاعك'; primary.textContent = 'دخول'; }
+  else if (mode === 'new') { sub.textContent = 'أنشئ PIN من ٤ أرقام لأول مرة'; primary.textContent = 'التالي'; }
+  else if (mode === 'confirm') { sub.textContent = 'أكّد الـ PIN تاني'; primary.textContent = 'تأكيد'; }
+}
+let _newPin = null;
+
+function renderPinSlots() {
+  const wrap = document.getElementById('pinSlots');
+  wrap.innerHTML = '';
+  for (let i = 0; i < 4; i++) {
+    const d = document.createElement('div');
+    d.className = 'pin-slot' + (pinDigits[i] !== undefined ? ' filled' : '');
+    d.textContent = pinDigits[i] !== undefined ? '●' : '';
+    wrap.appendChild(d);
+  }
+}
+function renderPinKeypad() {
+  const wrap = document.getElementById('pinKeypad');
+  wrap.innerHTML = '';
+  const keys = ['1','2','3','4','5','6','7','8','9','⌫','0','✕'];
+  for (const k of keys) {
+    const b = document.createElement('button');
+    b.className = 'pin-key'; b.textContent = k;
+    b.onclick = () => pressPinKey(k === '⌫' ? 'back' : k === '✕' ? 'clear' : k);
+    wrap.appendChild(b);
+  }
+}
+function pressPinKey(k) {
+  if (isLoginBusy) return;
+  if (k === 'back') { pinDigits.pop(); }
+  else if (k === 'clear') { pinDigits = []; }
+  else if (pinDigits.length < 4) { pinDigits.push(k); }
+  renderPinSlots();
+  clearTimeout(autoLoginTimer);
+  if (pinDigits.length === 4) autoLoginTimer = setTimeout(() => handlePrimaryLoginAction(), 140);
+}
+
+async function handleEmployeeChange() {
+  const username = document.getElementById('loginSelect').value;
+  hideLoginAlert();
+  if (!username) { renderLoginMode('employee'); return; }
+  setLoginBusy(true);
+  try {
+    const d = await apiGet('check_employee', { username });
+    if (!d.exists) { showLoginAlert('المستخدم غير موجود'); renderLoginMode('employee'); return; }
+    if (!d.isActive) { showLoginAlert('الحساب موقوف — تواصل مع المسؤول'); renderLoginMode('employee'); return; }
+    renderLoginMode(d.hasPin ? 'existing' : 'new');
+  } catch (e) { showLoginAlert(e.message); }
+  finally { setLoginBusy(false); }
+}
+
+function setLoginBusy(b) {
+  isLoginBusy = b;
+  document.getElementById('loginSelect').disabled = b;
+  document.querySelectorAll('.pin-key').forEach(k => k.disabled = b);
+  document.getElementById('loginPrimaryBtn').disabled = b;
+}
+
+async function handlePrimaryLoginAction() {
+  if (isLoginBusy) return;
+  if (loginMode === 'existing') return verifyExistingPin();
+  if (loginMode === 'new') {
+    if (pinDigits.length !== 4) { showLoginAlert('اكتب ٤ أرقام'); return; }
+    _newPin = pinDigits.join('');
+    renderLoginMode('confirm');
+    return;
+  }
+  if (loginMode === 'confirm') return registerNewPinAndLogin();
+}
+
+async function verifyExistingPin() {
+  if (pinDigits.length !== 4) return;
+  const username = document.getElementById('loginSelect').value;
+  const pin = pinDigits.join('');
+  setLoginBusy(true);
+  try {
+    const d = await apiPost('verify_employee', { username, pin });
+    if (!d.ok) return presentLoginPinError(d.error || 'PIN خطأ');
+    finishLogin({ username, displayName: d.displayName });
+  } catch (e) { presentLoginPinError(e.message); }
+  finally { setLoginBusy(false); }
+}
+
+async function registerNewPinAndLogin() {
+  if (pinDigits.join('') !== _newPin) { presentLoginPinError('الـ PIN مش متطابق — جرب تاني'); renderLoginMode('new'); return; }
+  const username = document.getElementById('loginSelect').value;
+  setLoginBusy(true);
+  try {
+    const r = await apiPost('register_pin', { username, pin: _newPin });
+    if (!r.ok) return presentLoginPinError(r.error || 'تعذّر إنشاء PIN');
+    const d = await apiPost('verify_employee', { username, pin: _newPin });
+    if (!d.ok) return presentLoginPinError(d.error || 'PIN خطأ');
+    finishLogin({ username, displayName: d.displayName });
+  } catch (e) { presentLoginPinError(e.message); }
+  finally { setLoginBusy(false); }
+}
+
+async function presentLoginPinError(message) {
+  playBeep('error');
+  showLoginAlert(message);
+  const slots = document.getElementById('pinSlots');
+  slots.classList.add('shake');
+  await new Promise(r => setTimeout(r, 760));
+  slots.classList.remove('shake');
+  pinDigits = []; renderPinSlots();
+}
+
+function finishLogin({ username, displayName }) {
+  currentEmployee = { username, displayName };
+  document.getElementById('loginOverlay').classList.add('hidden');
+  document.getElementById('sessionInfo').textContent = `👤 ${displayName}`;
+  document.getElementById('sessionInfo').setAttribute('aria-label', `مسجّل دخول باسم ${displayName}`);
+  playBeep('success');
+  showToast(`أهلاً ${displayName} ✓`, 'success');
+  document.getElementById('scanInput').focus();
+  checkWorkerVersion();
+}
+
+function doLogout() {
+  if (!currentEmployee) return;
+  const username = currentEmployee.username;
+  apiGet('log_logout', { username }).catch(() => {});
+  currentEmployee = null;
+  document.getElementById('orderCard').style.display = 'none';
+  document.getElementById('orderCard').innerHTML = '';
+  document.getElementById('scanInput').value = '';
+  document.getElementById('loginOverlay').classList.remove('hidden');
+  document.getElementById('loginSelect').value = '';
+  renderLoginMode('employee');
+  loadEmployeesList();
+}
+
+// ══════════════════════════════════════════════════════
+// §SCAN
+// ══════════════════════════════════════════════════════
+let scanTimer;
+document.getElementById('scanInput').addEventListener('input', () => {
+  clearTimeout(scanTimer);
+  const isBurst = document.getElementById('scanInput').value.length > 3;
+  scanTimer = setTimeout(handleScan, isBurst ? 150 : 400);
+});
+document.getElementById('scanInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { clearTimeout(scanTimer); handleScan(); } });
+
+let currentOrder = null;
+
+async function handleScan() {
+  const input = document.getElementById('scanInput');
+  const val = input.value.trim();
+  if (!val) return;
+  input.value = '';
+  input.focus();
+  await lookupOrder(val);
+}
+
+// ══════════════════════════════════════════════════════
+// §ORDER-JS
+// ══════════════════════════════════════════════════════
+async function lookupOrder(q) {
+  const card = document.getElementById('orderCard');
+  card.style.display = '';
+  card.innerHTML = '<div class="card"><div class="q-empty">⏳ جاري البحث عن الأوردر...</div></div>';
+  try {
+    const d = await apiGet('lookup_order', { q });
+    if (!d.ok) { card.innerHTML = `<div class="card"><div class="pd-elig-banner bad">${esc(d.error)}</div></div>`; playBeep('warn'); return; }
+    currentOrder = d.order;
+    renderOrder(d.order, d.eligibility);
+  } catch (e) {
+    card.innerHTML = `<div class="card"><div class="pd-elig-banner bad">تعذّر الاستعلام: ${esc(e.message)}</div></div>`;
+    playBeep('error');
+  }
+}
+
+function renderOrder(order, elig) {
+  const card = document.getElementById('orderCard');
+  const items = order.lineItems || [];
+  const itemsHtml = items.map((li, i) => `
+    <div class="pd-item ${li.removed ? 'removed' : ''}">
+      ${li.image ? `<img src="${esc(li.image)}" alt="">` : `<div class="pd-item img" style="width:46px;height:46px;background:var(--surface-2);border-radius:6px;"></div>`}
+      <input type="checkbox" data-li="${esc(li.id)}" ${li.removed ? 'disabled' : ''} onchange="updateRemoveBtn()">
+      <div class="info">
+        <div class="t" title="${esc(li.title)}">${esc(li.title)}${li.variantTitle ? ' — ' + esc(li.variantTitle) : ''}</div>
+        <div class="s">${esc(li.sku || '—')}</div>
+      </div>
+      <div class="qty">${li.removed ? 'اتشال' : `الكمية: ${li.currentQuantity}`}</div>
+    </div>`).join('');
+
+  card.innerHTML = `
+    <div class="card">
+      <div class="pd-order-hdr">
+        <div>
+          <a class="order-link" href="https://admin.shopify.com/store/6c7e1a-53/orders/${esc(order.id)}" target="_blank" rel="noopener">${esc(order.name)}</a>
+          <span style="margin-inline-start:8px;color:var(--text-secondary);">${esc(order.customer || '—')}</span>
+        </div>
+        <div>
+          <span class="pd-badge mono">S1: ${esc(order.s1 || '—')}</span>
+          <span class="pd-badge mono">${esc(order.fulfillmentStatus)}</span>
+        </div>
+      </div>
+      <div class="pd-elig-banner ${elig.eligible ? 'ok' : 'bad'}">
+        ${elig.eligible ? '✅ الأوردر مؤهّل للتسليم الجزئي' : `⛔ ${esc(elig.reason)}`}
+      </div>
+      ${elig.eligible ? `
+        <h3>المنتجات</h3>
+        ${itemsHtml}
+        <div class="pd-opts">
+          <label><input type="checkbox" id="optRestock"> رجّع الكمية للمخزون (Restock)</label>
+          <input type="text" id="optReason" placeholder="سبب الحذف (اختياري)">
+        </div>
+        <button class="btn btn-red" id="removeBtn" disabled onclick="confirmRemove()">🗑 شيل المنتجات المحددة</button>
+        <div id="removeResult"></div>
+      ` : ''}
+    </div>`;
+}
+
+function updateRemoveBtn() {
+  const n = document.querySelectorAll('#orderCard input[type="checkbox"][data-li]:checked').length;
+  const btn = document.getElementById('removeBtn');
+  if (!btn) return;
+  btn.disabled = n === 0;
+  btn.textContent = n ? `🗑 شيل ${n} منتج محدد` : '🗑 شيل المنتجات المحددة';
+}
+
+// ══════════════════════════════════════════════════════
+// §REMOVE-JS
+// ══════════════════════════════════════════════════════
+async function confirmRemove() {
+  const checked = [...document.querySelectorAll('#orderCard input[type="checkbox"][data-li]:checked')];
+  if (!checked.length) return;
+  const ids = checked.map(c => c.dataset.li);
+  const restock = document.getElementById('optRestock').checked;
+  const reason  = document.getElementById('optReason').value.trim();
+
+  const ok = await askConfirm({
+    header: '⚠️ تأكيد التسليم الجزئي',
+    lead: `هتشيل ${ids.length} منتج من الأوردر ${currentOrder.name}:`,
+    lines: [
+      { text: '🚫 الحذف نهائي — الأوردر هيرجع Shipped بمنتجات أقل' },
+      { text: restock ? '📦 الكمية هترجع للمخزون' : '⚠️ الكمية مش هترجع للمخزون (بلا Restock)', soft: true },
+    ],
+    okLabel: `تأكيد — شيل ${ids.length} منتج`,
+  });
+  if (!ok) return;
+
+  const btn = document.getElementById('removeBtn');
+  btn.disabled = true;
+  const resEl = document.getElementById('removeResult');
+  resEl.innerHTML = '<div class="q-empty">⏳ جاري التنفيذ — من فضلك متقفلش الصفحة...</div>';
+
+  try {
+    const d = await apiPost('remove_items', {
+      employee: currentEmployee.username, orderId: currentOrder.id, lineItemIds: ids, restock, reason,
+    });
+    renderRemoveResult(d);
+    if (d.status === 'success' || d.status === 'already') { playBeep('success'); await lookupOrder(currentOrder.name); }
+    else if (d.status === 'warning') { playBeep('warn'); await lookupOrder(currentOrder.name); }
+    else { playBeep('error'); btn.disabled = false; }
+  } catch (e) {
+    resEl.innerHTML = `<div class="pd-result error"><span class="badge">✗ فشل</span>${esc(e.message)}</div>`;
+    playBeep('error'); btn.disabled = false;
+  }
+}
+
+function renderRemoveResult(d) {
+  const resEl = document.getElementById('removeResult');
+  const map = { success: ['success', '✓ تم'], warning: ['warning', '⚠ تم جزئيًا'], error: ['error', '✗ فشل'], already: ['already', 'ℹ️ متعمل خلاص'] };
+  const [cls, label] = map[d.status] || ['error', d.status];
+  const actions = (d.actions || []).map(a => `<li>${esc(a)}</li>`).join('');
+  const warnings = (d.warnings || []).map(w => `<li>${esc(w)}</li>`).join('');
+  resEl.innerHTML = `
+    <div class="pd-result ${cls}">
+      <span class="badge">${label}</span>
+      ${d.error ? esc(d.error) : ''}
+      ${actions ? `<ul>${actions}</ul>` : ''}
+      ${warnings ? `<ul>${warnings}</ul>` : ''}
+      ${d.logged === false ? '<div style="margin-top:6px;color:var(--amber-dark);">⚠️ العملية تمت لكن ما اتسجّلتش في السجل</div>' : ''}
+    </div>`;
+}
+
+// ══════════════════════════════════════════════════════
+// §LOG-JS — multi-select minimal + server pagination
+// ══════════════════════════════════════════════════════
+const LOG_PAGE_SIZE = 100;
+let logCurrentPage = 1, logTotalCount = 0, logSearchTimer = null;
+const msState = { employee: new Set(), type: new Set() };
+const TYPE_LABELS = { remove_item: 'شيل منتج', remove_failed: 'فشل الشيل', rejected: 'مرفوض' };
+let allEmployeesCache = null;
+
+document.getElementById('logSearch').addEventListener('input', function () {
+  this.classList.toggle('has-value', !!this.value);
+  clearTimeout(logSearchTimer);
+  logSearchTimer = setTimeout(() => { logCurrentPage = 1; fetchLog(); }, 400);
+});
+
+function msToggle(key) {
+  document.querySelectorAll('.ms-list').forEach(l => { if (l.id !== `msList-${key}`) l.classList.remove('open'); });
+  document.getElementById(`msList-${key}`).classList.toggle('open');
+}
+document.addEventListener('click', (e) => {
+  if (!document.contains(e.target)) return;
+  if (e.target.closest('.ms-wrap')) return;
+  document.querySelectorAll('.ms-list').forEach(l => l.classList.remove('open'));
+});
+
+async function syncMsItems() {
+  if (!allEmployeesCache) {
+    try { allEmployeesCache = (await apiGet('get_employees')).employees || []; } catch { allEmployeesCache = []; }
+  }
+  renderMsList('employee', allEmployeesCache.map(e => ({ value: e.username, label: e.display_name })));
+  renderMsList('type', Object.entries(TYPE_LABELS).map(([value, label]) => ({ value, label })));
+}
+function renderMsList(key, options) {
+  const list = document.getElementById(`msList-${key}`);
+  list.innerHTML = `<div class="ms-ftr-top"><button onclick="msClear('${key}')">مسح الاختيار</button></div>` +
+    options.map(o => `<label class="ms-item"><input type="checkbox" data-v="${esc(o.value)}" ${msState[key].has(o.value) ? 'checked' : ''} onchange="msItemChange('${key}', this)"> ${esc(o.label)}</label>`).join('');
+  const btn = document.getElementById(`msBtn-${key}`);
+  btn.classList.toggle('active', msState[key].size > 0);
+}
+function msItemChange(key, el) {
+  const v = el.dataset.v;
+  if (el.checked) msState[key].add(v); else msState[key].delete(v);
+  document.getElementById(`msBtn-${key}`).classList.toggle('active', msState[key].size > 0);
+  onLogFilterChange();
+}
+function msClear(key) {
+  msState[key].clear();
+  syncMsItems();
+  onLogFilterChange();
+}
+
+function onLogFilterChange() { logCurrentPage = 1; clearExportWarn(); fetchLog(); }
+function clearExportWarn() { const w = document.getElementById('logExportWarn'); w.style.display = 'none'; w.innerHTML = ''; }
+
+function logParams() {
+  const p = {};
+  if (msState.employee.size) p.employees = [...msState.employee].join(',');
+  if (msState.type.size)     p.types     = [...msState.type].join(',');
+  const search = document.getElementById('logSearch').value.trim();
+  if (search) p.search = search;
+  const dateFrom = document.getElementById('logDateFrom').value;
+  const dateTo   = document.getElementById('logDateTo').value;
+  if (dateFrom) p.dateFrom = dateFrom + 'T00:00:00.000Z';
+  if (dateTo)   p.dateTo   = dateTo   + 'T23:59:59.999Z';
+  return p;
+}
+
+async function fetchLog() {
+  if (!isConfigured() || !currentEmployee) return;
+  const offset = (logCurrentPage - 1) * LOG_PAGE_SIZE;
+  const base = logParams();
+  try {
+    const [pageData, countData] = await Promise.all([
+      apiGet('get_logs', { ...base, limit: LOG_PAGE_SIZE, offset }),
+      apiGet('get_logs_count', base),
+    ]);
+    logTotalCount = countData.total || 0;
+    renderLog(pageData.entries || []);
+    renderPagination();
+    document.getElementById('logResultsCount').textContent = logTotalCount.toLocaleString('en-US');
+  } catch (e) { showToast(`تعذّر تحميل السجل: ${e.message}`, 'error'); }
+}
+
+function safeExtra(entry) { try { return entry.extra ? JSON.parse(entry.extra) : {}; } catch { return {}; } }
+
+function renderLog(entries) {
+  const body = document.getElementById('logTableBody');
+  if (!entries.length) { body.innerHTML = '<tr><td colspan="6" class="q-empty">مفيش نتايج</td></tr>'; return; }
+  body.innerHTML = entries.map(e => {
+    const extra = safeExtra(e);
+    const result = extra.result || null;
+    const chip = result ? `<span class="result-chip ${result}">${esc(result)}</span>` : '—';
+    return `<tr>
+      <td>${esc(formatDateTime(e.timestamp))}</td>
+      <td>${e.order_id ? `<a class="order-link" href="https://admin.shopify.com/store/6c7e1a-53/orders/${esc(e.order_id)}" target="_blank" rel="noopener">${esc(e.order_name || e.order_id)}</a>` : '—'}</td>
+      <td>${esc(TYPE_LABELS[e.type] || e.type)}</td>
+      <td>${chip}</td>
+      <td>${esc(e.employee || '—')}</td>
+      <td>${esc(e.notes || '—')}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderPagination() {
+  const totalPages = Math.max(1, Math.ceil(logTotalCount / LOG_PAGE_SIZE));
+  document.getElementById('paginationRow').style.display = totalPages > 1 ? '' : 'none';
+  document.getElementById('pageInfo').textContent = `صفحة ${logCurrentPage} من ${totalPages}`;
+  document.getElementById('btnPrevPage').disabled = logCurrentPage <= 1;
+  document.getElementById('btnNextPage').disabled = logCurrentPage >= totalPages;
+}
+function goPage(dir) {
+  const totalPages = Math.ceil(logTotalCount / LOG_PAGE_SIZE);
+  const next = logCurrentPage + dir;
+  if (next < 1 || next > totalPages) return;
+  logCurrentPage = next; fetchLog();
+}
+
+async function exportLogXLSX() {
+  clearExportWarn();
+  if (typeof ExcelJS === 'undefined') { showToast('مكتبة التصدير ما اتحمّلتش — تأكد إن CDN مش محجوب', 'error', 7000); return; }
+  let data;
+  try { data = await apiGet('get_logs_export', logParams()); }
+  catch (e) { showToast(`تعذّر التصدير: ${e.message}`, 'error'); return; }
+  const entries = data.entries || [];
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('السجل');
+  ws.columns = [
+    { header: 'الوقت', key: 'timestamp', width: 22 },
+    { header: 'الأوردر', key: 'order_name', width: 14 },
+    { header: 'النوع', key: 'type', width: 14 },
+    { header: 'النتيجة', key: 'result', width: 12 },
+    { header: 'الموظف', key: 'employee', width: 16 },
+    { header: 'ملاحظات', key: 'notes', width: 40 },
+  ];
+  entries.forEach(e => ws.addRow({
+    timestamp: e.timestamp, order_name: e.order_name || e.order_id || '', type: TYPE_LABELS[e.type] || e.type,
+    result: safeExtra(e).result || '', employee: e.employee || '', notes: e.notes || '',
+  }));
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: 'application/octet-stream' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `partial-delivery-log-${cairoDateStr()}.xlsx`;
+  a.click();
+
+  const truncated = data.truncated === true || (data.cap && entries.length >= data.cap);
+  const warn = document.getElementById('logExportWarn');
+  if (truncated) {
+    warn.innerHTML = `⚠️ <b>التصدير اتقص</b> — الملف فيه ${entries.length.toLocaleString('en-US')} صف من أصل <b>${(data.total||0).toLocaleString('en-US')}</b> مطابقين للفلاتر. ضيّق الفترة أو الفلاتر وصدّر على دفعات.`;
+    warn.style.display = '';
+    showToast('⚠️ التصدير اتقص — الملف مش كامل', 'error', 7000);
+  } else { showToast(`تم تصدير ${entries.length.toLocaleString('en-US')} عملية ✓`, 'success'); }
+}
+
+// ══════════════════════════════════════════════════════
+// §TIME — Africa/Cairo يتحسب (constants §13)
+// ══════════════════════════════════════════════════════
+const CAIRO_TZ = 'Africa/Cairo';
+const _cairoFmt = new Intl.DateTimeFormat('en-CA', { timeZone: CAIRO_TZ, hourCycle: 'h23', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' });
+function cairoParts(d) {
+  try { const o = {}; for (const p of _cairoFmt.formatToParts(d)) if (p.type !== 'literal') o[p.type] = p.value; if (o.hour === '24') o.hour = '00'; return o; }
+  catch { return null; }
+}
+function cairoDateStr(d = new Date()) { const p = cairoParts(d); return p ? `${p.year}-${p.month}-${p.day}` : '—'; }
+function formatDateTime(iso) {
+  const p = cairoParts(new Date(iso));
+  if (!p) return '—';
+  let h = +p.hour; const ampm = h >= 12 ? 'م' : 'ص'; h = h % 12 || 12;
+  return `📅 ${p.day}/${p.month}/${p.year} 🕐 ${String(h).padStart(2,'0')}:${p.minute} ${ampm}`;
+}
+
+// ══════════════════════════════════════════════════════
+// §INIT
+// ══════════════════════════════════════════════════════
+document.getElementById('loginVersionText').textContent = `v${TOOL_VERSION}`;
+document.getElementById('verBtn').textContent = `v${TOOL_VERSION} 📋`;
+updateLoginSettingsBtn();
+renderLoginMode('employee');
+loadEmployeesList();
+checkWorkerVersion();
+</script>
+</body>
+</html>

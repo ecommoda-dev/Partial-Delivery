@@ -1,0 +1,37 @@
+{
+  "tool": "partial_delivery",
+  "since": null,
+  "types": {
+    "login": {
+      "result": null,
+      "stage": null,
+      "desc": "دخول موظف"
+    },
+    "logout": {
+      "result": null,
+      "stage": null,
+      "desc": "خروج موظف"
+    },
+    "rejected": {
+      "result": "rejected",
+      "stage": "lookup",
+      "desc": "الأوردر مش موجود أو حالته مش صالحة للتسليم الجزئي"
+    },
+    "remove_failed": {
+      "result": "error",
+      "stage": "write",
+      "desc": "شيل المنتج فشل وقت الكتابة"
+    },
+    "remove_item": {
+      "result": [
+        "already",
+        "error"
+      ],
+      "stage": [
+        "lookup",
+        "write"
+      ],
+      "desc": "منتج اتشال ضمن التسليم الجزئي"
+    }
+  }
+}

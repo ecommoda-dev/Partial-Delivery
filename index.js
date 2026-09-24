@@ -3,8 +3,8 @@
 // Worker: partial-delivery-worker — EcomModa
 // Tool:   التسليم الجزئي — Partial Delivery
 //
-// skills: worker-builder v3.4.0 · constants v2.7.0 · html-builder v7.2.0 ·
-//         order-lifecycle v1.8.0 · shopify-graphql-helper v2.3.0 — 20-09-2026
+// skills: worker-builder v3.8.0 · constants v3.1.0 · html-builder v7.2.0 ·
+//         order-lifecycle v1.8.0 · shopify-graphql-helper v2.3.0 — 24-09-2026
 //
 // 🔴 **بتعمل إيه بالظبط.** الموظف بيدخل رقم أوردر أو يسكن الـ Order ID —
 //    الأوردر ده S1 = Shipped (أو In-Return — قاعدة ١٢) والمنتجات فيه
@@ -53,9 +53,17 @@
 //    من غير إعادة فلفلمنت لحد ما التاب اتقفل. أي أوردر لمسته المحاولات
 //    الفاشلة قبل النشرة دي محتاج مراجعة يدوية (فلفلمنت جديد أو إعادة محاولة
 //    بعد النشر).
+//
+// 🔴 **v1.0.2 (24-09-2026)** — استبدال `check-log-values.mjs` بنسخة مصلَّحة
+//    (كانت بتدوّر على `type:` بنقطتين بس وبتفوّت object shorthand `{ type }`
+//    في صمت — الفحص المصلَّح رجّع نفس الخمس قيم بدقة، exit 0). + تنفيذ
+//    الحارس الديناميكي (worker-builder Step 7-ج، الطبقة ٥) جوّه `writeLog`
+//    — `§LOG-REG`: `LOG_REGISTRY` مبني من `log-values.json`، وأي (tool,type)
+//    مش مسجّلة بتتكتب برضه + `extra._unregistered=true` + UPSERT صامت في
+//    `log_value_alerts`. مفيش رفض كتابة أبدًا.
 // ══════════════════════════════════════════════════════════════
 const TOOL_NAME      = 'partial_delivery';
-const WORKER_VERSION = '1.0.1';
+const WORKER_VERSION = '1.0.2';
 
 // ══════════════════════════════════════════════════════════════
 // §CORS — Option B (قايمة صارمة)
@@ -115,6 +123,60 @@ function cairoDate() { const p = cairoParts(new Date()); return p ? `${p.year}-$
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ══════════════════════════════════════════════════════════════
+// §LOG-REG — الحارس الديناميكي لقيم اللوج (الطبقة ٥ · worker-builder Step 7-ج)
+// ══════════════════════════════════════════════════════════════
+// قطعة الأداة دي بس من log-values.json اللي جنبها — بتتحدّث معاه في نفس
+// الـ commit. الأداة دي بتكتب تحت tool واحد بس (partial_delivery)، مفيش
+// كاتب تاني ولا سجل مشترك.
+const LOG_REGISTRY = {
+  partial_delivery: new Set(['login', 'logout', 'rejected', 'remove_failed', 'remove_item']),
+};
+
+const isRegisteredLogValue = (tool, type) => !!LOG_REGISTRY[tool]?.has(type);
+
+// UPSERT على (source_tool, tool, type) — صف واحد لكل قيمة، hits بيعدّ.
+// الحدث الكامل مش بيضيع: الصف الأصلي موجود في logs وعليه _unregistered،
+// والجدول ده فهرس مش سجل تاني — عشان كده dedupe مش صف لكل حدث.
+const LOG_ALERT_SQL = `
+  INSERT INTO log_value_alerts
+    (source_tool, tool, type, first_seen, last_seen, hits,
+     worker_version, sample_order_name, sample_employee, sample_notes)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(source_tool, tool, type) DO UPDATE SET
+    last_seen         = excluded.last_seen,
+    hits              = log_value_alerts.hits + excluded.hits,
+    worker_version    = excluded.worker_version,
+    sample_order_name = excluded.sample_order_name,
+    sample_employee   = excluded.sample_employee,
+    sample_notes      = excluded.sample_notes,
+    status            = CASE WHEN log_value_alerts.status = 'ignored'
+                             THEN 'ignored' ELSE 'open' END
+`;
+
+// فشل التنبيه ممنوع يأثر على أي حاجة — try/catch صامت. بتجمّع التكرار
+// جوّه نفس الدفعة في صف واحد (hits) قبل ما تكتب.
+async function noteUnregisteredLogValues(db, entries) {
+  const byPair = new Map();
+  for (const e of entries) {
+    const key = `${e.tool}\u0000${e.type}`;
+    const acc = byPair.get(key);
+    if (acc) { acc.hits++; continue; }
+    byPair.set(key, { entry: e, hits: 1 });
+  }
+  const now = new Date().toISOString();
+  for (const { entry, hits } of byPair.values()) {
+    try {
+      await db.prepare(LOG_ALERT_SQL).bind(
+        TOOL_NAME, entry.tool ?? '(بدون tool)', entry.type ?? '(بدون type)',
+        now, now, hits, WORKER_VERSION ?? null,
+        entry.orderName ?? null, entry.employee ?? null,
+        entry.notes ? String(entry.notes).slice(0, 200) : null,
+      ).run();
+    } catch (e) { /* متعمّد: التنبيه فهرس، وفشله أهون من تعطيل الأداة */ }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════
 // §SHARED — copy verbatim from references/shared-functions.md — never modify
 // ══════════════════════════════════════════════════════════════
 async function verifyEmployee(db, username, pin) {
@@ -148,6 +210,12 @@ async function registerPin(db, username, pin) {
 }
 
 async function writeLog(db, entry) {
+  // ─── §LOG-REG guard (الطبقة ٥) — مفيش رفض كتابة أبدًا ───
+  const unregistered = !isRegisteredLogValue(entry.tool, entry.type);
+  const extra = unregistered
+    ? { ...(entry.extra || {}), _unregistered: true }
+    : entry.extra;
+
   await db.prepare(`
     INSERT INTO logs
       (timestamp, tool, type, employee, order_id, order_name,
@@ -165,8 +233,10 @@ async function writeLog(db, entry) {
     entry.valueBefore  ?? null,
     entry.valueAfter   ?? null,
     entry.notes        ?? null,
-    entry.extra ? JSON.stringify(entry.extra) : null
+    extra ? JSON.stringify(extra) : null
   ).run();
+
+  if (unregistered) await noteUnregisteredLogValues(db, [entry]).catch(() => {});
 }
 
 // ─── §SHARED::buildLogFilterSQL — قوايم (multi-select) + مدى تاريخ ───

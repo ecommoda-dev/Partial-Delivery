@@ -238,9 +238,9 @@ type  : remove_item · remove_failed · login · logout
 
 | المهارة | الإصدار وقت آخر تعديل |
 |---|---|
-| ecommoda-worker-builder | **v3.4.0** |
+| ecommoda-worker-builder | **v3.8.0** |
 | ecommoda-html-builder | **v7.2.0** |
-| ecommoda-constants | **v2.7.0** |
+| ecommoda-constants | **v3.1.0** |
 | ecommoda-order-lifecycle | **v1.8.0** |
 | shopify-graphql-helper | **v2.3.0** |
 | ecommoda-tool-migration-playbook | §9 (أداة جديدة من الصفر) |

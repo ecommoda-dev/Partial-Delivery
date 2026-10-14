@@ -63,7 +63,7 @@
 //    `log_value_alerts`. مفيش رفض كتابة أبدًا.
 // ══════════════════════════════════════════════════════════════
 const TOOL_NAME      = 'partial_delivery';
-const WORKER_VERSION = '1.0.2';
+const WORKER_VERSION = '1.0.3';
 
 // ══════════════════════════════════════════════════════════════
 // §CORS — Option B (قايمة صارمة)
@@ -413,6 +413,19 @@ async function resolveOrder(env, token, rawQuery, costLog) {
 // ─── §ORDER::eligibility — نفس الفحص للعرض وللتحقق الطازج قبل الكتابة ───
 // S1=Shipped أو In-Return (order-lifecycle Rule 12: In-Return ≡ Shipped)
 const ELIGIBLE_S1 = new Set(['Shipped', 'In-Return']);
+// ── نص «Reason» في Order Edit (v1.0.3) ──
+// منتج واحد: سطر واحد بالـ SKU. أكتر من منتج: سطر لكل SKU (SKU ×الكمية).
+// SKU فاضي → title بدله. سبب الموظف الحر (لو كُتب) في سطر «ملاحظة:» آخر الرسالة.
+function buildStaffNote(items, employee, reason) {
+  const label = i => `${i.sku || i.title} ×${i.quantity}`;
+  const head = items.length === 1
+    ? `تسليم جزئي — العميل لم يستلم المنتج ${label(items[0])} ورجع مع المندوب`
+    : `تسليم جزئي — العميل لم يستلم المنتجات التالية ورجعت مع المندوب:\n${items.map(label).join('\n')}`;
+  const lines = [head, `وقام باستلام المنتجات المرتجعة والحذف من الأوردر بواسطة ${employee}`];
+  if (reason) lines.push(`ملاحظة: ${reason}`);
+  return lines.join('\n');
+}
+
 function checkEligibility(order, requestedLineItemIds) {
   if (!order) return { eligible: false, reason: 'الأوردر غير موجود' };
   if (order.cancelledAt) return { eligible: false, reason: 'الأوردر ملغي (cancelledAt) — مفيش تسليم جزئي على أوردر ملغي' };
@@ -781,7 +794,7 @@ export default {
           await cancelFulfillments(env, token, order.fulfillments, actions, costLog);
 
           // ② Order Edit — تصفير كمية العناصر المطلوب حذفها
-          const staffNote = `تسليم جزئي — شيل ${removedItemsMeta.length} منتج بمعرفة ${employee}` + (reason ? ` — ${reason}` : '');
+          const staffNote = buildStaffNote(removedItemsMeta, employee, reason);
           const editedOrderId = await editRemoveLineItems(env, token, gid, lineItemIds, !!restock, staffNote, actions, costLog);
 
           // ③ إعادة فلفلمنت الباقي — تكميلي، فشله warning مش error (Step 5A ⑩②)

@@ -2,7 +2,7 @@
 
 # التسليم الجزئي — Partial Delivery (`Partial-Delivery`)
 
-![version](https://img.shields.io/badge/version-v1.1.0-blue)
+![version](https://img.shields.io/badge/version-v1.2.0-blue)
 
 **بتعمل إيه:** أوردر `S1 = Shipped` (أو `In-Return`) ومنتجاته **Fulfilled** بالكامل،
 واتضح إن منتج (أو أكتر) منه مش هيتسلّم فعليًا. الموظف بيدخل رقم الأوردر أو يسكن
@@ -12,7 +12,7 @@
 
 **مين بيستخدمها:** موظفو الشحن والتحصيل — من صفحة `partial-delivery.html`
 جوّه هب `Delivery-COD-Operations-Center` (مش من الريبو ده).
-**الإصدار:** `v1.1.0` (الريبو/التوثيق) — `WORKER_VERSION` جوّه `index.js` = `1.0.3`.
+**الإصدار:** `v1.2.0` (الريبو/التوثيق) — `WORKER_VERSION` جوّه `index.js` = `1.1.0`.
 
 ## 🔴 الريبو ده Worker بس من v1.1.0 — مفيش واجهة هنا
 
@@ -194,6 +194,34 @@ Unfulfilled) **قبل** ② Order Edit (`worker-builder` Step 5A ⑩①). يعن
 - سبب الموظف الحر (لو اتكتب) سطر `ملاحظة: …` في الآخر — كان `— ${reason}` في نفس السطر.
 - ⚠️ النص ده مش بيتقرا من أي أداة تانية (متأكَّد بـ`grep`)، فتغييره مالوش أثر على عقد D1.
 
+## 🔴 v1.1.0 (Worker) — دفتر القطع الراجعة للمخزن (طلب أحمد 22-10-2026)
+
+**الفكرة:** القطعة اللي اتشالت بالتسليم الجزئي **فعليًا رجعت مع المندوب للمكتب** —
+والأوردر بيفضل `S1 = Shipped`، فمحطة استلام المرتجعات (`Package-Transfer-To-Warehouse`)
+ماكانتش شايفاها خالص. دلوقتي بعد كل حذف **اتأكد** (`success`/`warning`) الأداة
+بتكتب سطر `pending` **لكل وحدة** اتشالت في جدول D1 المشترك:
+
+```
+warehouse_return_items   ← المخطط في ريبو Package-Transfer-To-Warehouse: schema/warehouse_return_items.sql
+source = 'partial_delivery' · cycle_key = 'partial' · machine = 'S1' · status = 'pending'
+```
+
+- 🔴 **الكاتب الوحيد لسطور `pending`** — قطع الأوردر المرتجع/الملغي **مابتتكتبش
+  مسبقًا**؛ بتتحسب من شوبيفاي لحظة السكان في محطة المخزن.
+- 🔴 **`INSERT OR IGNORE` على `UNIQUE (source, order_id, cycle_key, line_item_id, unit_index)`**
+  — إعادة نفس الحذف مابتكرّرش سطور. وحدة لكل صف (`unit_index` من ١ للكمية).
+- 🔴 **فشل الدفتر مابيلغيش الحذف** (فعل تكميلي · `worker-builder` Step 5A ⑩②) —
+  النتيجة بتبقى `warning` برسالة «الحذف تم، لكن القطع ما اتسجّلتش في دفتر الرجوع
+  للمخزن … بلّغ المخزن»، و`extra.ledger = { error }`. الحذف نفسه لا رجعة فيه.
+- ⚠️ **قطعة مالهاش `variant.barcode`** بتتسجّل برضه (بلا باركود) وبيتقال ده سطر
+  معلومة في `actions` — في المخزن بتتقفل بـ«استلام يدوي».
+- ⚠️ **صفر قيمة `type` جديدة** — `extra.ledger = { units, inserted }` على صف
+  `remove_item` الموجود، والرد فيه `ledger`. `check-log-values.mjs` عدّى.
+- 🔴 **الجدول لازم يتعمل قبل نشر الـ Worker** — من غيره كل حذف بيرجع `warning`
+  (الحذف بيتم والقطع مابتتسجّلش). `?action=diag` فيه بند «جدول دفتر القطع
+  الراجعة» بيقول ده بالاسم.
+- ⚠️ **التتبّع بيبدأ من يوم النشر** (قرار أحمد) — مفيش backfill لحذوفات قديمة.
+
 ## CORS
 
 ```
@@ -252,7 +280,7 @@ type  : remove_item · remove_failed · login · logout
 
 | المهارة | الإصدار وقت آخر تعديل |
 |---|---|
-| ecommoda-worker-builder | **v3.8.0** |
+| ecommoda-worker-builder | **v3.10.0** |
 | ecommoda-html-builder | **v7.2.0** |
 | ecommoda-constants | **v3.1.0** |
 | ecommoda-order-lifecycle | **v1.8.0** |
@@ -260,6 +288,9 @@ type  : remove_item · remove_failed · login · logout
 | ecommoda-tool-migration-playbook | §9 (أداة جديدة من الصفر) |
 
 ## مسائل مفتوحة
+
+- 🔴 **(v1.1.0) إنشاء جدول `warehouse_return_items` في D1 Console قبل النشر** —
+  المخطط في `Package-Transfer-To-Warehouse/schema/warehouse_return_items.sql`.
 
 ### ✅ اتقفلت في v1.0.1 (بلاغ #55619 · 20-09-2026)
 
@@ -325,3 +356,6 @@ v1.0.1 (إصلاح `calculatedOrder_lookup` — بلاغ #55619:
 `calculatedOrder(id:)` مش موجودة على `QueryRoot`، والمطابقة بقت بـ`node(id:)`
 + الرقم العددي للـ ID، نفس نمط `Order-Item-Remover`. ⚠️ أوردرات اتمسّت
 بمحاولات فاشلة قبل النشرة دي محتاجة مراجعة يدوية)
+
+آخر تحديث: 22-10-2026 — Worker v1.1.0 (دفتر القطع الراجعة للمخزن: سطر `pending`
+لكل قطعة اتشالت في `warehouse_return_items` · فشله `warning` مش `error`)

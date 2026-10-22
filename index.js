@@ -3,8 +3,8 @@
 // Worker: partial-delivery-worker — EcomModa
 // Tool:   التسليم الجزئي — Partial Delivery
 //
-// skills: worker-builder v3.8.0 · constants v3.1.0 · html-builder v7.2.0 ·
-//         order-lifecycle v1.8.0 · shopify-graphql-helper v2.3.0 — 24-09-2026
+// skills: worker-builder v3.10.0 · constants v3.1.0 · html-builder v7.2.0 ·
+//         order-lifecycle v1.8.0 · shopify-graphql-helper v2.3.0 — 22-10-2026
 //
 // 🔴 **بتعمل إيه بالظبط.** الموظف بيدخل رقم أوردر أو يسكن الـ Order ID —
 //    الأوردر ده S1 = Shipped (أو In-Return — قاعدة ١٢) والمنتجات فيه
@@ -61,9 +61,16 @@
 //    — `§LOG-REG`: `LOG_REGISTRY` مبني من `log-values.json`، وأي (tool,type)
 //    مش مسجّلة بتتكتب برضه + `extra._unregistered=true` + UPSERT صامت في
 //    `log_value_alerts`. مفيش رفض كتابة أبدًا.
+//
+// 🔴 **v1.1.0 (22-10-2026 · طلب أحمد)** — بعد كل حذف اتأكد (success/warning)
+//    بيتكتب سطر `pending` لكل قطعة اتشالت في جدول D1 المشترك
+//    `warehouse_return_items` (§LEDGER تحت) — عشان محطة استلام المخزن
+//    (`package-transfer-to-warehouse-worker`) تعرف إن القطعة في المكتب ومستنية
+//    ترجع، وتقفل السطر لما القطعة تتسكن. الاستعلام بقى بيجيب `variant { id barcode }`.
+//    ⚠️ فشل الدفتر **مابيلغيش الحذف** — بيتحوّل `warning`. وصفر قيمة `type` جديدة.
 // ══════════════════════════════════════════════════════════════
 const TOOL_NAME      = 'partial_delivery';
-const WORKER_VERSION = '1.0.3';
+const WORKER_VERSION = '1.1.0';
 
 // ══════════════════════════════════════════════════════════════
 // §CORS — Option B (قايمة صارمة)
@@ -368,7 +375,7 @@ const ORDER_FIELDS = `
   manualStatusMf: metafield(namespace: "custom", key: "manual_status") { value }
   lineItems(first: 50) {
     nodes { id title sku variantTitle currentQuantity quantity unfulfilledQuantity
-             image { url } }
+             image { url } variant { id barcode } }
   }
   fulfillments(first: 10) { id status displayStatus createdAt }
   fulfillmentOrders(first: 10) {
@@ -446,6 +453,52 @@ function checkEligibility(order, requestedLineItemIds) {
     }
   }
   return { eligible: true };
+}
+
+// ══════════════════════════════════════════════════════════════
+// §LEDGER — دفتر القطع الراجعة للمخزن (v1.1.0)
+// ══════════════════════════════════════════════════════════════
+// 🔴 **عقد مع `package-transfer-to-warehouse-worker`** — هو اللي بيقرا السطور
+//    دي في محطة الاستلام وبيقفلها (`received`) لما القطعة تتسكن في المخزن.
+//    الجدول وتعريفه في ريبو `Package-Transfer-To-Warehouse` →
+//    `schema/warehouse_return_items.sql`. أي تغيير في اسم عمود أو قيمة
+//    (`source` · `cycle_key` · `status`) يتعمل في الريبوهين في نفس التمريرة —
+//    من غيره القايمة في المحطة بتفضل فاضية **بلا أي خطأ**.
+// ⚠️ **ليه التسليم الجزئي لازم يكتب هنا:** الأوردر بيفضل `Shipped` بعد الحذف،
+//    فعمره ما بيظهر في طابور محطة الاستلام. السطر ده هو الأثر الوحيد إن القطعة
+//    في المكتب ومستنية ترجع.
+// ⚠️ **قطعة لكل سطر** (`unit_index`) — الكمية ٢ = سطرين، عشان كل سكانة تقفل
+//    قطعة واحدة بالظبط.
+// ⚠️ **`INSERT OR IGNORE` على المفتاح الفريد** — إعادة نفس العملية مابتكررش
+//    السطور. والـ `batch` ذرّي: يا كل السطور يا ولا واحد.
+const LEDGER_SOURCE = 'partial_delivery';
+const LEDGER_CYCLE  = 'partial';
+
+function ledgerUnits(items) {
+  const units = [];
+  for (const it of items) {
+    const qty = Number.isInteger(it.quantity) && it.quantity > 0 ? it.quantity : 0;
+    for (let u = 1; u <= qty; u++) units.push({ ...it, unitIndex: u });
+  }
+  return units;
+}
+
+async function registerPendingReturns(db, { orderId, orderName, items, employee }) {
+  const units = ledgerUnits(items);
+  if (!units.length) return { units: 0, inserted: 0 };
+  const now  = new Date().toISOString();
+  const stmt = db.prepare(`
+    INSERT OR IGNORE INTO warehouse_return_items
+      (source, cycle_key, order_id, order_name, machine, line_item_id, variant_id,
+       sku, barcode, title, unit_index, status, created_at, created_by)
+    VALUES (?, ?, ?, ?, 'S1', ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`);
+  const res = await db.batch(units.map(u => stmt.bind(
+    LEDGER_SOURCE, LEDGER_CYCLE, String(orderId), orderName || null,
+    u.id, u.variantId || null, u.sku || null, u.barcode || null, u.title || null,
+    u.unitIndex, now, employee || null,
+  )));
+  const inserted = res.reduce((s, r) => s + (r?.meta?.changes || 0), 0);
+  return { units: units.length, inserted };
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -604,6 +657,18 @@ async function handleDiag(env, request) {
          'صفر صف مش دليل على عطل (constants §7.0) — ممكن الأداة لسه ما اتنشرتش');
   } catch (e) {
     push(false, 'D1', `FAILED: ${e.message}`, 'binding اسمه DB بالحرف في wrangler.toml');
+  }
+
+  // §LEDGER — الجدول بيتعمل يدوي مرة واحدة من D1 Console (schema/warehouse_return_items.sql
+  // في ريبو Package-Transfer-To-Warehouse). من غيره كل حذف ناجح بيرجع warning.
+  try {
+    const r = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM warehouse_return_items WHERE source = ? AND status = 'pending'`
+    ).bind(LEDGER_SOURCE).first();
+    push(true, 'دفتر الرجوع للمخزن (warehouse_return_items)', `موجود — ${r?.n ?? 0} قطعة مستنية الاستلام من التسليم الجزئي`);
+  } catch (e) {
+    push(false, 'دفتر الرجوع للمخزن (warehouse_return_items)', `FAILED: ${e.message}`,
+         'شغّل schema/warehouse_return_items.sql (ريبو Package-Transfer-To-Warehouse) مرة واحدة من D1 Console');
   }
 
   try {
@@ -786,7 +851,8 @@ export default {
 
         const removedItemsMeta = (order.lineItems.nodes || [])
           .filter(li => lineItemIds.includes(li.id))
-          .map(li => ({ id: li.id, title: li.title, sku: li.sku, quantity: li.currentQuantity }));
+          .map(li => ({ id: li.id, title: li.title, sku: li.sku, quantity: li.currentQuantity,
+                        variantId: li.variant?.id || null, barcode: li.variant?.barcode || null }));
 
         let result = { status: 'error', error: null, warnings: [] };
         try {
@@ -810,6 +876,33 @@ export default {
           result.error  = e.message;
         }
 
+        // ─── §LEDGER (v1.1.0) — بعد ما `orderEditCommit` اتأكد بس ───
+        // ⚠️ `success` و`warning` معناهم إن التعديل اتعمل commit فعلاً (الـ warning
+        //    من إعادة الفلفلمنت بس — بعد الـ commit). `error` = الـ commit ما حصلش،
+        //    فمفيش قطعة اتشالت ومفيش حاجة تتسجّل.
+        // 🔴 فشل الدفتر **مايلغيش الحذف** (اتعمل خلاص ومالوش رجعة) — بيتحوّل
+        //    لـ`warning` برسالة بتقول المطلوب، والصف في D1 بيسجّل ده.
+        let ledger = null;
+        if (result.status !== 'error') {
+          try {
+            ledger = await registerPendingReturns(env.DB, {
+              orderId: gidToNumeric(order.id), orderName: order.name,
+              items: removedItemsMeta, employee,
+            });
+            actions.push(`ledger:pending×${ledger.inserted}`);
+          } catch (e3) {
+            ledger = { error: e3.message };
+            result.status = 'warning';
+            result.warnings.push(`الحذف تم، لكن القطع ما اتسجّلتش في دفتر الرجوع للمخزن (${e3.message}) — `
+              + 'بلّغ المخزن بالقطع دي يدويًا عشان تتسكن في محطة الاستلام');
+          }
+          // ℹ️ معلومة مش تحذير — القطعة اتسجّلت عادي، بس المحطة هتستلمها «يدوي».
+          const noBarcode = removedItemsMeta.filter(i => !i.barcode).map(i => i.sku || i.title);
+          if (noBarcode.length) {
+            actions.push(`ℹ️ مالهاش باركود على شوبيفاي: ${noBarcode.join('، ')} — هتتستلم في المخزن يدوي`);
+          }
+        }
+
         let logged = true;
         try {
           await writeLog(env.DB, {
@@ -822,6 +915,7 @@ export default {
               actions, removedItems: removedItemsMeta, restock: !!restock, reason: reason || null,
               warnings: result.warnings, s1Before: order.manualStatusMf?.value || null,
               fulfillmentStatusBefore: order.displayFulfillmentStatus,
+              ledger: ledger || undefined,
             },
           });
         } catch { logged = false; }
@@ -829,7 +923,7 @@ export default {
         return json({
           ok: result.status !== 'error', status: result.status,
           error: result.error, warnings: result.warnings,
-          actions, removedItems: removedItemsMeta, logged, queryCost: costLog,
+          actions, removedItems: removedItemsMeta, ledger, logged, queryCost: costLog,
         }, result.status === 'error' ? 500 : 200, request);
       }
 

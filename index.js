@@ -15,8 +15,13 @@
 //       بيصفّر كمية المنتج(ات) المطلوب حذفها ·
 //    ③ فلفلمنت جديد (`fulfillmentCreate`) لباقي المنتجات — فترجع الحالة
 //       Fulfilled زي ما كانت، والأوردر يفضل S1=Shipped زي ما هو.
-//    ⛔ **ده مش استرجاع ولا استبدال** — مفيش S2 ومفيش `returns[]`. الأثر
-//    المالي (لو فيه رد فلوس) شغل أداة تانية (`cod-payment-center-worker`).
+//    ⛔ **الأداة مالهاش علاقة بالـ Return ولا بالفلوس** — الأثر المالي (لو فيه رد
+//    فلوس) شغل أداة تانية (`cod-payment-center-worker`).
+// 🔴 **v1.2.0 (29-10-2026) — أوردرات الاستبدال S2:** S1 = Delivered و S2 ∈
+//    {Shipped, In-Return}. المنتجات المسموح حذفها = القطع اللي اتفلفلت **بعد**
+//    `createdAt` بتاع آخر Return (قراءة بس · محتاجة `read_returns`) — القطع الأصلية
+//    اللي اتسلّمت قبل كده مش من نطاق الأداة. وبنلغي ونعيد فلفلمنت الفلفلمنت اللي فيه
+//    القطع بس. S1 و S2 مؤهلين مع بعض = رفض بسبب. الدفتر: `machine='S2'` · `cycle_key='partial'`.
 //
 // 🔴 **الترتيب ده قرار معماري مش تفصيلة تنفيذ** — Shopify's Order Edit API
 //    بيقدر يعدّل كمية غير مُنفَّذة بس (`unfulfilledQuantity`). المنتج
@@ -70,7 +75,7 @@
 //    ⚠️ فشل الدفتر **مابيلغيش الحذف** — بيتحوّل `warning`. وصفر قيمة `type` جديدة.
 // ══════════════════════════════════════════════════════════════
 const TOOL_NAME      = 'partial_delivery';
-const WORKER_VERSION = '1.1.0';
+const WORKER_VERSION = '1.2.0';
 
 // ══════════════════════════════════════════════════════════════
 // §CORS — Option B (قايمة صارمة)
@@ -373,11 +378,15 @@ const ORDER_FIELDS = `
   id name cancelledAt displayFulfillmentStatus displayFinancialStatus
   customer { displayName }
   manualStatusMf: metafield(namespace: "custom", key: "manual_status") { value }
+  manualStatus2Mf: metafield(namespace: "custom", key: "status_2_r_e") { value }
   lineItems(first: 50) {
     nodes { id title sku variantTitle currentQuantity quantity unfulfilledQuantity
              image { url } variant { id barcode } }
   }
-  fulfillments(first: 10) { id status displayStatus createdAt }
+  fulfillments(first: 10) {
+    id status displayStatus createdAt
+    fulfillmentLineItems(first: 50) { nodes { quantity lineItem { id } } }
+  }
   fulfillmentOrders(first: 10) {
     nodes {
       id status
@@ -418,41 +427,131 @@ async function resolveOrder(env, token, rawQuery, costLog) {
 }
 
 // ─── §ORDER::eligibility — نفس الفحص للعرض وللتحقق الطازج قبل الكتابة ───
-// S1=Shipped أو In-Return (order-lifecycle Rule 12: In-Return ≡ Shipped)
-const ELIGIBLE_S1 = new Set(['Shipped', 'In-Return']);
-// ── نص «Reason» في Order Edit (v1.0.3) ──
-// منتج واحد: سطر واحد بالـ SKU. أكتر من منتج: سطر لكل SKU (SKU ×الكمية).
-// SKU فاضي → title بدله. سبب الموظف الحر (لو كُتب) في سطر «ملاحظة:» آخر الرسالة.
+// 🔴 v1.2.0 — الأداة بقت بتشتغل على ماكينتين:
+//    · S1 ∈ {Shipped, In-Return} → ماكينة S1 (زي ما كانت بالحرف)
+//    · S1 = Delivered و S2 ∈ {Shipped, In-Return} → ماكينة S2 (دورة استبدال/استرجاع)
+//    (order-lifecycle Rule 12: In-Return ≡ Shipped في الماكينتين)
+//    ⛔ الاتنين مؤهلين مع بعض (S1 و S2 معًا) = رفض بسبب مكتوب — قرار أحمد 29-10-2026.
+const ELIGIBLE_STATUS = new Set(['Shipped', 'In-Return']);
+
+// بيرجّع { machine: 's1'|'s2'|null, reason }
+function pickMachine(order) {
+  const s1 = order.manualStatusMf?.value || null;
+  const s2 = order.manualStatus2Mf?.value || null;
+  const s1Ok = !!s1 && ELIGIBLE_STATUS.has(s1);
+  const s2Ok = !!s2 && ELIGIBLE_STATUS.has(s2);
+  if (s1Ok && s2Ok)
+    return { machine: null, reason: `S1 = ${s1} و S2 = ${s2} معًا — الأوردر على الماكينتين في نفس الوقت، والأداة بتوقف عن قصد. لازم واحدة منهم تتقفل الأول وبعدها حاول تاني` };
+  if (s1Ok) return { machine: 's1', reason: null };
+  if (s2Ok) {
+    if (s1 !== 'Delivered')
+      return { machine: null, reason: `S1 = ${s1 || '—'} و S2 = ${s2} — دورة الاستبدال بتبدأ بعد S1 = Delivered بس` };
+    return { machine: 's2', reason: null };
+  }
+  return { machine: null,
+    reason: `S1 = ${s1 || '—'} · S2 = ${s2 || '—'} — الأداة دي لأوردرات S1 أو S2 = Shipped/In-Return بس` };
+}
+
+// ── نص «Reason» في Order Edit (v1.2.0) — صفوف تحت بعض ──
+// منتج واحد:  تسليم جزئي / العميل لم يستلم المنتج (SKU ×الكمية) / والقطعة رجعت مع المندوب / تم استلام…
+// أكتر من منتج: سطر لكل (SKU ×الكمية). SKU فاضي → title بدله.
+// سبب الموظف الحر (لو كُتب) في سطر «ملاحظة:» آخر الرسالة.
 function buildStaffNote(items, employee, reason) {
-  const label = i => `${i.sku || i.title} ×${i.quantity}`;
-  const head = items.length === 1
-    ? `تسليم جزئي — العميل لم يستلم المنتج ${label(items[0])} ورجع مع المندوب`
-    : `تسليم جزئي — العميل لم يستلم المنتجات التالية ورجعت مع المندوب:\n${items.map(label).join('\n')}`;
-  const lines = [head, `وقام باستلام المنتجات المرتجعة والحذف من الأوردر بواسطة ${employee}`];
+  const label = i => `(${i.sku || i.title} ×${i.quantity})`;
+  const lines = ['تسليم جزئي'];
+  if (items.length === 1) {
+    lines.push(`العميل لم يستلم المنتج ${label(items[0])}`, 'والقطعة رجعت مع المندوب');
+  } else {
+    lines.push('العميل لم يستلم المنتجات التالية:', ...items.map(label), 'والقطع رجعت مع المندوب');
+  }
+  lines.push(`تم استلام المنتجات المرتجعة من الأوردر بواسطة ${employee}`);
   if (reason) lines.push(`ملاحظة: ${reason}`);
   return lines.join('\n');
 }
 
-function checkEligibility(order, requestedLineItemIds) {
+// ─── §ORDER::cycleStart — بداية آخر دورة R/E (S2 بس) ───
+// 🔴 قراءة بس — الأداة مابتلمسش الـ Return ولا بتحذّر منه (قرار أحمد). بنقرا
+//    `createdAt` عشان نعرف القطع الخارجة في الدورة دي (اللي اتفلفلت بعدها).
+//    محتاجة `read_returns` — لو ناقصة shopifyGQL بترمي والمستدعي بيحوّلها لرفض بسبب.
+async function fetchCycleStart(env, token, orderGid, costLog) {
+  const data = await shopifyGQL(env, token,
+    `query OrderReturns($id: ID!) { order(id: $id) { returns(first: 10) { nodes { id status createdAt } } } }`,
+    { id: orderGid }, 'order_returns', costLog);
+  const live = (data.data?.order?.returns?.nodes || [])
+    .filter(r => r.status !== 'CANCELED' && r.status !== 'DECLINED')
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  return live[0]?.createdAt || null;
+}
+
+// أوردر S2 → context الأهلية (بيرمي لو قراءة الـ Return فشلت)
+async function loadCycleContext(env, token, order, costLog) {
+  if (pickMachine(order).machine !== 's2') return { cycleStart: null, cycleError: null };
+  try {
+    return { cycleStart: await fetchCycleStart(env, token, order.id, costLog), cycleError: null };
+  } catch (e) {
+    return { cycleStart: null, cycleError: e.message };
+  }
+}
+
+// line item ids اللي اتفلفلت بعد بداية الدورة. `includeCancelled` للـ idempotency بس.
+function postCycleLineIds(order, cycleStart, includeCancelled) {
+  const t0 = Date.parse(cycleStart);
+  const ids = new Set();
+  for (const f of order.fulfillments || []) {
+    if (!includeCancelled && f.status === 'CANCELLED') continue;
+    if (!(Date.parse(f.createdAt) > t0)) continue;
+    for (const n of f.fulfillmentLineItems?.nodes || []) if (n.lineItem?.id) ids.add(n.lineItem.id);
+  }
+  return ids;
+}
+
+// المنتجات المسموح حذفها: S1 = أي سطر لسه موجود · S2 = القطع الخارجة في آخر دورة بس
+function removableLineIds(order, machine, cycleStart) {
+  const live = (order.lineItems?.nodes || []).filter(li => li.currentQuantity > 0);
+  if (machine !== 's2') return live.map(li => li.id);
+  const out = postCycleLineIds(order, cycleStart, false);
+  return live.filter(li => out.has(li.id)).map(li => li.id);
+}
+
+function checkEligibility(order, requestedLineItemIds, ctx = {}) {
   if (!order) return { eligible: false, reason: 'الأوردر غير موجود' };
   if (order.cancelledAt) return { eligible: false, reason: 'الأوردر ملغي (cancelledAt) — مفيش تسليم جزئي على أوردر ملغي' };
 
-  const s1 = order.manualStatusMf?.value || null;
-  if (!s1 || !ELIGIBLE_S1.has(s1))
-    return { eligible: false, reason: `S1 = ${s1 || '—'} — الأداة دي لأوردرات Shipped أو In-Return بس` };
+  const { machine, reason } = pickMachine(order);
+  if (!machine) return { eligible: false, reason };
 
   if (!['FULFILLED', 'PARTIALLY_FULFILLED'].includes(order.displayFulfillmentStatus))
     return { eligible: false, reason: `حالة الفلفلمنت = ${order.displayFulfillmentStatus} — الأداة محتاجة أوردر Fulfilled فعلاً` };
 
+  let removable = null;
+  if (machine === 's2') {
+    if (ctx.cycleError)
+      return { eligible: false, reason: `تعذّرت قراءة دورة الاستبدال على شوبيفاي (${ctx.cycleError}) — راجع صلاحية read_returns` };
+    if (!ctx.cycleStart)
+      return { eligible: false, reason: 'S2 = ' + (order.manualStatus2Mf?.value || '—') + ' بس مفيش دورة استرجاع/استبدال على شوبيفاي — مفيش قطع خارجة نحدّدها' };
+    removable = removableLineIds(order, 's2', ctx.cycleStart);
+    if (!removable.length && !(requestedLineItemIds && requestedLineItemIds.length))
+      return { eligible: false, reason: 'مفيش قطع خارجة في دورة الاستبدال الحالية (اللي اتفلفلت بعد آخر Return) — القطع الأصلية اللي اتسلّمت قبل كده مش من نطاق الأداة' };
+  } else {
+    removable = removableLineIds(order, 's1', null);
+  }
+
   if (requestedLineItemIds && requestedLineItemIds.length) {
     const byId = new Map((order.lineItems?.nodes || []).map(li => [li.id, li]));
+    const everOut = machine === 's2' ? postCycleLineIds(order, ctx.cycleStart, true) : null;
     for (const id of requestedLineItemIds) {
       const li = byId.get(id);
       if (!li) return { eligible: false, reason: `المنتج ${id} مش في الأوردر ده`, itemIssue: id };
-      if (li.currentQuantity === 0) return { eligible: true, already: true, alreadyItem: id }; // idempotent
+      if (li.currentQuantity === 0) {
+        // idempotent — بس في S2 لازم يكون من قطع الدورة (الأصلي المرتجع كمية صفر برضه وملوش دعوة بينا)
+        if (!everOut || everOut.has(id)) return { eligible: true, already: true, alreadyItem: id, machine };
+        return { eligible: false, reason: `المنتج ${li.sku || li.title} قطعة أصلية مش من قطع الاستبدال الخارجة — خارج نطاق التسليم الجزئي`, itemIssue: id };
+      }
+      if (machine === 's2' && !removable.includes(id))
+        return { eligible: false, reason: `المنتج ${li.sku || li.title} قطعة أصلية اتسلّمت قبل دورة الاستبدال — خارج نطاق التسليم الجزئي`, itemIssue: id };
     }
   }
-  return { eligible: true };
+  return { eligible: true, machine, removableLineItemIds: removable };
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -467,6 +566,7 @@ function checkEligibility(order, requestedLineItemIds) {
 // ⚠️ **ليه التسليم الجزئي لازم يكتب هنا:** الأوردر بيفضل `Shipped` بعد الحذف،
 //    فعمره ما بيظهر في طابور محطة الاستلام. السطر ده هو الأثر الوحيد إن القطعة
 //    في المكتب ومستنية ترجع.
+// 🔴 v1.2.0 — `machine` = 'S1' | 'S2' حسب ماكينة الأوردر، و`cycle_key` فاضل `'partial'` (قرار أحمد: الأداة بلا علاقة بالـ Return).
 // ⚠️ **قطعة لكل سطر** (`unit_index`) — الكمية ٢ = سطرين، عشان كل سكانة تقفل
 //    قطعة واحدة بالظبط.
 // ⚠️ **`INSERT OR IGNORE` على المفتاح الفريد** — إعادة نفس العملية مابتكررش
@@ -483,7 +583,7 @@ function ledgerUnits(items) {
   return units;
 }
 
-async function registerPendingReturns(db, { orderId, orderName, items, employee }) {
+async function registerPendingReturns(db, { orderId, orderName, items, employee, machine = 'S1' }) {
   const units = ledgerUnits(items);
   if (!units.length) return { units: 0, inserted: 0 };
   const now  = new Date().toISOString();
@@ -491,9 +591,9 @@ async function registerPendingReturns(db, { orderId, orderName, items, employee 
     INSERT OR IGNORE INTO warehouse_return_items
       (source, cycle_key, order_id, order_name, machine, line_item_id, variant_id,
        sku, barcode, title, unit_index, status, created_at, created_by)
-    VALUES (?, ?, ?, ?, 'S1', ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`);
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`);
   const res = await db.batch(units.map(u => stmt.bind(
-    LEDGER_SOURCE, LEDGER_CYCLE, String(orderId), orderName || null,
+    LEDGER_SOURCE, LEDGER_CYCLE, String(orderId), orderName || null, machine,
     u.id, u.variantId || null, u.sku || null, u.barcode || null, u.title || null,
     u.unitIndex, now, employee || null,
   )));
@@ -598,12 +698,13 @@ async function editRemoveLineItems(env, token, orderId, lineItemIds, restock, st
 }
 
 // ─── §REMOVE::refulfillRemaining — فلفلمنت جديد على الباقي بعد التعديل ───
-async function refulfillRemaining(env, token, orderId, actions, costLog) {
+// onlyLineItemIds: Set أو null — S2 بيحصر إعادة الفلفلمنت على قطع الفلفلمنت اللي اتلغى (مش الأصلي المتسلّم).
+async function refulfillRemaining(env, token, orderId, actions, costLog, onlyLineItemIds = null) {
   const data = await shopifyGQL(env, token, `
     query FO($id: ID!) {
       order(id: $id) {
         fulfillmentOrders(first: 10) {
-          nodes { id status lineItems(first: 50) { nodes { id remainingQuantity } } }
+          nodes { id status lineItems(first: 50) { nodes { id remainingQuantity lineItem { id } } } }
         }
       }
     }`, { id: orderId }, 'fulfillmentOrders_after_edit', costLog);
@@ -611,7 +712,8 @@ async function refulfillRemaining(env, token, orderId, actions, costLog) {
   const fos = (data.data?.order?.fulfillmentOrders?.nodes || []).filter(fo => fo.status === 'OPEN');
   const byFO = [];
   for (const fo of fos) {
-    const lines = (fo.lineItems?.nodes || []).filter(l => l.remainingQuantity > 0)
+    const lines = (fo.lineItems?.nodes || [])
+      .filter(l => l.remainingQuantity > 0 && (!onlyLineItemIds || onlyLineItemIds.has(l.lineItem?.id)))
       .map(l => ({ id: l.id, quantity: l.remainingQuantity }));
     if (lines.length) byFO.push({ fulfillmentOrderId: fo.id, fulfillmentOrderLineItems: lines });
   }
@@ -692,6 +794,18 @@ async function handleDiag(env, request) {
          'orderEditBegin/SetQuantity/Commit محتاجين write_order_edits+read_order_edits (مش write_orders). fulfillmentCancel/Create محتاجين صلاحية fulfillment orders منفصلة — راجعها يدويًا لو الفحص ده OK والحذف برضه بيرمي خطأ صلاحية');
   } catch (e) {
     push(false, 'شوبيفاي', `FAILED: ${e.message}`);
+  }
+
+  try {
+    assertEnv(env);
+    const token2 = await getAccessToken(env);
+    const d2 = await shopifyGQL(env, token2, `{ currentAppInstallation { accessScopes { handle } } }`, {}, 'diag_scopes_returns');
+    const sc = (d2.data?.currentAppInstallation?.accessScopes || []).map(x => x.handle);
+    push(sc.includes('read_returns'), 'صلاحية read_returns (أوردرات S2)',
+         sc.includes('read_returns') ? 'موجودة' : 'ناقصة — أوردرات S2 هتترفض لأن الأداة مش هتعرف تقرا بداية دورة الاستبدال',
+         'أضف read_returns لتطبيق Shopify Custom App ثم Release — قراءة بس، الأداة مابتعدّلش على أي Return');
+  } catch (e) {
+    push(false, 'صلاحية read_returns', `FAILED: ${e.message}`);
   }
 
   push(!!_lastThrottle, 'آخر throttleStatus', _lastThrottle ? JSON.stringify(_lastThrottle) : 'لسه مفيش نداء');
@@ -786,12 +900,16 @@ export default {
         const costLog = [];
         const { order, error } = await resolveOrder(env, token, q, costLog);
         if (!order) return json({ ok: false, error }, 404, request);
-        const elig = checkEligibility(order, null);
+        const cycle = await loadCycleContext(env, token, order, costLog);
+        const elig = checkEligibility(order, null, cycle);
+        const removableSet = new Set(elig.removableLineItemIds || []);
         return json({
           ok: true,
           order: {
             id: gidToNumeric(order.id), gid: order.id, name: order.name,
             s1: order.manualStatusMf?.value || null,
+            s2: order.manualStatus2Mf?.value || null,
+            machine: elig.machine || pickMachine(order).machine,
             fulfillmentStatus: order.displayFulfillmentStatus,
             financialStatus: order.displayFinancialStatus,
             customer: order.customer?.displayName || null,
@@ -801,6 +919,7 @@ export default {
               currentQuantity: li.currentQuantity, quantity: li.quantity,
               unfulfilledQuantity: li.unfulfilledQuantity, image: li.image?.url || null,
               removed: li.currentQuantity === 0,
+              removable: removableSet.has(li.id),
             })),
           },
           eligibility: elig,
@@ -834,7 +953,8 @@ export default {
           return json({ ok: false, status: 'error', error: 'الأوردر غير موجود' }, 404, request);
         }
 
-        const elig = checkEligibility(order, lineItemIds);
+        const cycle = await loadCycleContext(env, token, order, costLog);
+        const elig = checkEligibility(order, lineItemIds, cycle);
         if (!elig.eligible) {
           await writeLog(env.DB, { tool: TOOL_NAME, type: 'rejected', employee, orderId, orderName: order.name,
             notes: elig.reason, extra: { result: 'rejected', stage: 'lookup', lineItemIds } }).catch(() => {});
@@ -857,7 +977,18 @@ export default {
         let result = { status: 'error', error: null, warnings: [] };
         try {
           // ① إلغاء الفلفلمنت الحالي — إلزامي قبل Order Edit
-          await cancelFulfillments(env, token, order.fulfillments, actions, costLog);
+          //    S2: بنلغي الفلفلمنت اللي فيه القطع المحذوفة بس — الفلفلمنت الأصلي المتسلّم ما بيتلمسش.
+          //    S1: زي ما كان (كل الفلفلمنتات الشغّالة).
+          const targetSet = new Set(lineItemIds);
+          const holding = f => (f.fulfillmentLineItems?.nodes || []).some(n => targetSet.has(n.lineItem?.id));
+          const toCancel = elig.machine === 's2'
+            ? (order.fulfillments || []).filter(f => f.status !== 'CANCELLED' && holding(f))
+            : order.fulfillments;
+          await cancelFulfillments(env, token, toCancel, actions, costLog);
+          const keepLineIds = elig.machine === 's2'
+            ? new Set((toCancel || []).flatMap(f => (f.fulfillmentLineItems?.nodes || []).map(n => n.lineItem?.id))
+                .filter(id => id && !targetSet.has(id)))
+            : null;
 
           // ② Order Edit — تصفير كمية العناصر المطلوب حذفها
           const staffNote = buildStaffNote(removedItemsMeta, employee, reason);
@@ -865,7 +996,7 @@ export default {
 
           // ③ إعادة فلفلمنت الباقي — تكميلي، فشله warning مش error (Step 5A ⑩②)
           try {
-            await refulfillRemaining(env, token, editedOrderId || gid, actions, costLog);
+            await refulfillRemaining(env, token, editedOrderId || gid, actions, costLog, keepLineIds);
             result.status = 'success';
           } catch (e2) {
             result.status = 'warning';
@@ -888,6 +1019,7 @@ export default {
             ledger = await registerPendingReturns(env.DB, {
               orderId: gidToNumeric(order.id), orderName: order.name,
               items: removedItemsMeta, employee,
+              machine: elig.machine === 's2' ? 'S2' : 'S1',
             });
             actions.push(`ledger:pending×${ledger.inserted}`);
           } catch (e3) {
@@ -911,9 +1043,10 @@ export default {
             employee, orderId, orderName: order.name,
             notes: result.status === 'error' ? result.error : `شيل ${removedItemsMeta.map(i => i.sku || i.title).join(', ')}`,
             extra: {
-              result: result.status, stage: 'write',
+              result: result.status, stage: 'write', machine: elig.machine,
               actions, removedItems: removedItemsMeta, restock: !!restock, reason: reason || null,
               warnings: result.warnings, s1Before: order.manualStatusMf?.value || null,
+              s2Before: order.manualStatus2Mf?.value || null,
               fulfillmentStatusBefore: order.displayFulfillmentStatus,
               ledger: ledger || undefined,
             },

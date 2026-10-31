@@ -2,7 +2,7 @@
 
 # التسليم الجزئي — Partial Delivery (`Partial-Delivery`)
 
-![version](https://img.shields.io/badge/version-v1.3.0-blue)
+![version](https://img.shields.io/badge/version-v1.3.1-blue)
 
 **بتعمل إيه:** أوردر `S1 = Shipped` (أو `In-Return`) ومنتجاته **Fulfilled** بالكامل،
 واتضح إن منتج (أو أكتر) منه مش هيتسلّم فعليًا. الموظف بيدخل رقم الأوردر أو يسكن
@@ -12,7 +12,7 @@
 
 **مين بيستخدمها:** موظفو الشحن والتحصيل — من صفحة `partial-delivery.html`
 جوّه هب `Delivery-COD-Operations-Center` (مش من الريبو ده).
-**الإصدار:** `v1.3.0` (الريبو/التوثيق) — `WORKER_VERSION` جوّه `index.js` = `1.2.0`.
+**الإصدار:** `v1.3.1` (الريبو/التوثيق) — `WORKER_VERSION` جوّه `index.js` = `1.2.1`.
 
 ## 🔴 الريبو ده Worker بس من v1.1.0 — مفيش واجهة هنا
 
@@ -378,3 +378,5 @@ v1.0.1 (إصلاح `calculatedOrder_lookup` — بلاغ #55619:
 لكل قطعة اتشالت في `warehouse_return_items` · فشله `warning` مش `error`)
 
 آخر تحديث: 29-10-2026 — Worker v1.2.0 (التسليم الجزئي على أوردرات الاستبدال S2 · نص الـ Reason في صفوف). ما اتجرّبش على شوبيفاي حقيقية.
+
+آخر تحديث: 31-10-2026 — Worker v1.2.1 (توحيد الألفاظ: نص السجل `notes` بقى «حذف …» بدل «شيل …» — تغيير نص بس، صفر تغيير في العقد ولا `extra`؛ `min` في الهب فضل `1.2.0`).

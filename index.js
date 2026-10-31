@@ -9,7 +9,7 @@
 // 🔴 **بتعمل إيه بالظبط.** الموظف بيدخل رقم أوردر أو يسكن الـ Order ID —
 //    الأوردر ده S1 = Shipped (أو In-Return — قاعدة ١٢) والمنتجات فيه
 //    Fulfilled بالكامل. الموظف بيختار منتج (أو أكتر) اتضح إنه مش هيتسلّم
-//    فعليًا، والأداة بتشيله من الأوردر بلا ما تلمس باقي المنتجات:
+//    فعليًا، والأداة بتحذفه من الأوردر بلا ما تلمس باقي المنتجات:
 //    ① تلغي الفلفلمنت الحالي (بيرجع الكل Unfulfilled) ·
 //    ② Order Edit (`orderEditBegin`→`orderEditSetQuantity`→`orderEditCommit`)
 //       بيصفّر كمية المنتج(ات) المطلوب حذفها ·
@@ -68,14 +68,14 @@
 //    `log_value_alerts`. مفيش رفض كتابة أبدًا.
 //
 // 🔴 **v1.1.0 (22-10-2026 · طلب أحمد)** — بعد كل حذف اتأكد (success/warning)
-//    بيتكتب سطر `pending` لكل قطعة اتشالت في جدول D1 المشترك
+//    بيتكتب سطر `pending` لكل قطعة اتحذفت في جدول D1 المشترك
 //    `warehouse_return_items` (§LEDGER تحت) — عشان محطة استلام المخزن
 //    (`package-transfer-to-warehouse-worker`) تعرف إن القطعة في المكتب ومستنية
 //    ترجع، وتقفل السطر لما القطعة تتسكن. الاستعلام بقى بيجيب `variant { id barcode }`.
 //    ⚠️ فشل الدفتر **مابيلغيش الحذف** — بيتحوّل `warning`. وصفر قيمة `type` جديدة.
 // ══════════════════════════════════════════════════════════════
 const TOOL_NAME      = 'partial_delivery';
-const WORKER_VERSION = '1.2.0';
+const WORKER_VERSION = '1.2.1';
 
 // ══════════════════════════════════════════════════════════════
 // §CORS — Option B (قايمة صارمة)
@@ -360,7 +360,7 @@ function orderGid(numericId) { return `gid://shopify/Order/${numericId}`; }
 
 // ─── §SHOPIFY::normalizeOrderQuery — الباركود الطويل مقابل الاسم ───
 // نفس عتبة `dcoScanParse` بالحرف: ID رقمي طويل (≥١٠ خانات) يتفسّر كـ ID،
-// وأي حاجة تانية اسم (بعد شيل `#`).
+// وأي حاجة تانية اسم (بعد حذف `#`).
 function parseOrderQuery(raw) {
   const clean = String(raw || '').trim();
   if (!clean) return null;
@@ -961,7 +961,7 @@ export default {
           return json({ ok: false, status: 'rejected', error: elig.reason }, 409, request);
         }
 
-        // ③ idempotent — كل اللي اتطلب اتشال بالفعل
+        // ③ idempotent — كل اللي اتطلب اتحذف بالفعل
         if (elig.already) {
           await writeLog(env.DB, { tool: TOOL_NAME, type: 'remove_item', employee, orderId, orderName: order.name,
             notes: 'المنتج(ات) متشالة بالفعل من الأوردر — مفيش حاجة كانت مطلوبة',
@@ -1010,7 +1010,7 @@ export default {
         // ─── §LEDGER (v1.1.0) — بعد ما `orderEditCommit` اتأكد بس ───
         // ⚠️ `success` و`warning` معناهم إن التعديل اتعمل commit فعلاً (الـ warning
         //    من إعادة الفلفلمنت بس — بعد الـ commit). `error` = الـ commit ما حصلش،
-        //    فمفيش قطعة اتشالت ومفيش حاجة تتسجّل.
+        //    فمفيش قطعة اتحذفت ومفيش حاجة تتسجّل.
         // 🔴 فشل الدفتر **مايلغيش الحذف** (اتعمل خلاص ومالوش رجعة) — بيتحوّل
         //    لـ`warning` برسالة بتقول المطلوب، والصف في D1 بيسجّل ده.
         let ledger = null;
@@ -1041,7 +1041,7 @@ export default {
             tool: TOOL_NAME,
             type: result.status === 'error' ? 'remove_failed' : 'remove_item',
             employee, orderId, orderName: order.name,
-            notes: result.status === 'error' ? result.error : `شيل ${removedItemsMeta.map(i => i.sku || i.title).join(', ')}`,
+            notes: result.status === 'error' ? result.error : `حذف ${removedItemsMeta.map(i => i.sku || i.title).join(', ')}`,
             extra: {
               result: result.status, stage: 'write', machine: elig.machine,
               actions, removedItems: removedItemsMeta, restock: !!restock, reason: reason || null,

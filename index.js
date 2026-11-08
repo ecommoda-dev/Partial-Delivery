@@ -73,9 +73,16 @@
 //    (`package-transfer-to-warehouse-worker`) تعرف إن القطعة في المكتب ومستنية
 //    ترجع، وتقفل السطر لما القطعة تتسكن. الاستعلام بقى بيجيب `variant { id barcode }`.
 //    ⚠️ فشل الدفتر **مابيلغيش الحذف** — بيتحوّل `warning`. وصفر قيمة `type` جديدة.
+//
+// 🔴 **v1.3.0 (08-11-2026 · طلب أحمد)** — فلتر `results` (قايمة مفصولة بفاصلة من
+//    `success,warning,error,rejected,already`) على `get_logs` و`get_logs_count` و
+//    `get_logs_export` من `buildLogFilterSQL` — بيفلتر على `extra.result` جوّه الـ SQL
+//    مش في المتصفح (صفحة الـ١٠٠ صف + العدّاد + التصدير لازم يشوفوا نفس الفلتر).
+//    `json_valid` حارس: صف قديم `extra` بتاعه باظ مايوقّعش الاستعلام كله (`json_extract`
+//    بترمي على JSON غلط). صفر قيمة `type` جديدة · صفر تغيير في الكتابة.
 // ══════════════════════════════════════════════════════════════
 const TOOL_NAME      = 'partial_delivery';
-const WORKER_VERSION = '1.2.1';
+const WORKER_VERSION = '1.3.0';
 
 // ══════════════════════════════════════════════════════════════
 // §CORS — Option B (قايمة صارمة)
@@ -252,7 +259,7 @@ async function writeLog(db, entry) {
 }
 
 // ─── §SHARED::buildLogFilterSQL — قوايم (multi-select) + مدى تاريخ ───
-function buildLogFilterSQL({ employees, types, search, dateFrom, dateTo }) {
+function buildLogFilterSQL({ employees, types, results, search, dateFrom, dateTo }) {
   const where = ['tool = ?', "type NOT IN ('login','logout')"];
   const args  = [TOOL_NAME];
   if (employees && employees.length) {
@@ -262,6 +269,11 @@ function buildLogFilterSQL({ employees, types, search, dateFrom, dateTo }) {
   if (types && types.length) {
     where.push(`type IN (${types.map(() => '?').join(',')})`);
     args.push(...types);
+  }
+  if (results && results.length) {
+    // النتيجة مخزّنة في `extra.result` (JSON نص) — json_valid بيحمي من صف extra بتاعه باظ أو NULL
+    where.push(`CASE WHEN json_valid(extra) THEN json_extract(extra, '$.result') END IN (${results.map(() => '?').join(',')})`);
+    args.push(...results);
   }
   if (search) {
     where.push('(order_name LIKE ? OR notes LIKE ?)');
@@ -1066,10 +1078,11 @@ export default {
         const offset = parseInt(url.searchParams.get('offset') || '0', 10);
         const employees = (url.searchParams.get('employees') || '').split(',').filter(Boolean);
         const types      = (url.searchParams.get('types') || '').split(',').filter(Boolean);
+        const results    = (url.searchParams.get('results') || '').split(',').filter(Boolean);
         const search     = url.searchParams.get('search') || null;
         const dateFrom   = url.searchParams.get('dateFrom') || null;
         const dateTo     = url.searchParams.get('dateTo') || null;
-        const { whereSql, args } = buildLogFilterSQL({ employees, types, search, dateFrom, dateTo });
+        const { whereSql, args } = buildLogFilterSQL({ employees, types, results, search, dateFrom, dateTo });
         const { results } = await env.DB.prepare(
           `SELECT * FROM logs WHERE ${whereSql} ORDER BY timestamp DESC LIMIT ? OFFSET ?`
         ).bind(...args, limit, offset).all();
@@ -1079,10 +1092,11 @@ export default {
       if (action === 'get_logs_count') {
         const employees = (url.searchParams.get('employees') || '').split(',').filter(Boolean);
         const types      = (url.searchParams.get('types') || '').split(',').filter(Boolean);
+        const results    = (url.searchParams.get('results') || '').split(',').filter(Boolean);
         const search     = url.searchParams.get('search') || null;
         const dateFrom   = url.searchParams.get('dateFrom') || null;
         const dateTo     = url.searchParams.get('dateTo') || null;
-        const { whereSql, args } = buildLogFilterSQL({ employees, types, search, dateFrom, dateTo });
+        const { whereSql, args } = buildLogFilterSQL({ employees, types, results, search, dateFrom, dateTo });
         const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM logs WHERE ${whereSql}`).bind(...args).first();
         return json({ ok: true, total: row?.n ?? 0 }, 200, request);
       }
@@ -1091,10 +1105,11 @@ export default {
       if (action === 'get_logs_export') {
         const employees = (url.searchParams.get('employees') || '').split(',').filter(Boolean);
         const types      = (url.searchParams.get('types') || '').split(',').filter(Boolean);
+        const results    = (url.searchParams.get('results') || '').split(',').filter(Boolean);
         const search     = url.searchParams.get('search') || null;
         const dateFrom   = url.searchParams.get('dateFrom') || null;
         const dateTo     = url.searchParams.get('dateTo') || null;
-        const { whereSql, args } = buildLogFilterSQL({ employees, types, search, dateFrom, dateTo });
+        const { whereSql, args } = buildLogFilterSQL({ employees, types, results, search, dateFrom, dateTo });
         const totalRow = await env.DB.prepare(`SELECT COUNT(*) AS n FROM logs WHERE ${whereSql}`).bind(...args).first();
         const total = totalRow?.n ?? 0;
         const { results } = await env.DB.prepare(

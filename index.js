@@ -1078,11 +1078,11 @@ export default {
         const offset = parseInt(url.searchParams.get('offset') || '0', 10);
         const employees = (url.searchParams.get('employees') || '').split(',').filter(Boolean);
         const types      = (url.searchParams.get('types') || '').split(',').filter(Boolean);
-        const results    = (url.searchParams.get('results') || '').split(',').filter(Boolean);
+        const resultFilter = (url.searchParams.get('results') || '').split(',').filter(Boolean);
         const search     = url.searchParams.get('search') || null;
         const dateFrom   = url.searchParams.get('dateFrom') || null;
         const dateTo     = url.searchParams.get('dateTo') || null;
-        const { whereSql, args } = buildLogFilterSQL({ employees, types, results, search, dateFrom, dateTo });
+        const { whereSql, args } = buildLogFilterSQL({ employees, types, results: resultFilter, search, dateFrom, dateTo });
         const { results } = await env.DB.prepare(
           `SELECT * FROM logs WHERE ${whereSql} ORDER BY timestamp DESC LIMIT ? OFFSET ?`
         ).bind(...args, limit, offset).all();
@@ -1092,11 +1092,11 @@ export default {
       if (action === 'get_logs_count') {
         const employees = (url.searchParams.get('employees') || '').split(',').filter(Boolean);
         const types      = (url.searchParams.get('types') || '').split(',').filter(Boolean);
-        const results    = (url.searchParams.get('results') || '').split(',').filter(Boolean);
+        const resultFilter = (url.searchParams.get('results') || '').split(',').filter(Boolean);
         const search     = url.searchParams.get('search') || null;
         const dateFrom   = url.searchParams.get('dateFrom') || null;
         const dateTo     = url.searchParams.get('dateTo') || null;
-        const { whereSql, args } = buildLogFilterSQL({ employees, types, results, search, dateFrom, dateTo });
+        const { whereSql, args } = buildLogFilterSQL({ employees, types, results: resultFilter, search, dateFrom, dateTo });
         const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM logs WHERE ${whereSql}`).bind(...args).first();
         return json({ ok: true, total: row?.n ?? 0 }, 200, request);
       }
@@ -1105,11 +1105,11 @@ export default {
       if (action === 'get_logs_export') {
         const employees = (url.searchParams.get('employees') || '').split(',').filter(Boolean);
         const types      = (url.searchParams.get('types') || '').split(',').filter(Boolean);
-        const results    = (url.searchParams.get('results') || '').split(',').filter(Boolean);
+        const resultFilter = (url.searchParams.get('results') || '').split(',').filter(Boolean);
         const search     = url.searchParams.get('search') || null;
         const dateFrom   = url.searchParams.get('dateFrom') || null;
         const dateTo     = url.searchParams.get('dateTo') || null;
-        const { whereSql, args } = buildLogFilterSQL({ employees, types, results, search, dateFrom, dateTo });
+        const { whereSql, args } = buildLogFilterSQL({ employees, types, results: resultFilter, search, dateFrom, dateTo });
         const totalRow = await env.DB.prepare(`SELECT COUNT(*) AS n FROM logs WHERE ${whereSql}`).bind(...args).first();
         const total = totalRow?.n ?? 0;
         const { results } = await env.DB.prepare(

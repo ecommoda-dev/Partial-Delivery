@@ -12,7 +12,7 @@
 
 **مين بيستخدمها:** موظفو الشحن والتحصيل — من صفحة `partial-delivery.html`
 جوّه هب `Delivery-COD-Operations-Center` (مش من الريبو ده).
-**الإصدار:** `v1.3.1` (الريبو/التوثيق) — `WORKER_VERSION` جوّه `index.js` = `1.2.1`.
+**الإصدار:** `v1.3.1` (الريبو/التوثيق) — `WORKER_VERSION` جوّه `index.js` = `1.3.0`.
 
 ## 🔴 الريبو ده Worker بس من v1.1.0 — مفيش واجهة هنا
 
@@ -239,6 +239,18 @@ source = 'partial_delivery' · cycle_key = 'partial' · machine = 'S1' · status
   الراجعة» بيقول ده بالاسم.
 - ⚠️ **التتبّع بيبدأ من يوم النشر** (قرار أحمد) — مفيش backfill لحذوفات قديمة.
 
+## 🔴 v1.3.0 (Worker) — فلتر `results` على السجل (طلب أحمد 08-11-2026)
+
+`get_logs` · `get_logs_count` · `get_logs_export` بقوا بياخدوا `results=success,warning,error,rejected,already` (اختياري، مفصولة بفاصلة) من `buildLogFilterSQL`:
+
+```sql
+CASE WHEN json_valid(extra) THEN json_extract(extra, '$.result') END IN (?,?)
+```
+
+- 🔴 **`json_valid` إلزامي** — `json_extract` بترمي على JSON باظ، وصف قديم واحد كان هيوقّع الاستعلام كله. صف `extra` بتاعه `NULL`/باظ مابيطلعش مع أي قيمة مختارة. اتجرّب على SQLite حقيقي.
+- ⚠️ **الواجهة** (`Partial-Delivery.html` في هب `Delivery-COD-Operations-Center` v1.80.0) رافعة `ECO_WORKERS.partialDelivery.min` لـ `1.3.0`: على Worker أقدم الفلتر بيتجاهَل في صمت. **انشر الـ Worker قبل الصفحة.**
+- صفر قيمة `type` جديدة · صفر تغيير في الكتابة · `extra.warnings` كان بيتكتب أصلًا (الواجهة بقت بتعرضه في عمود «تفاصيل التحذير»).
+
 ## CORS
 
 ```
@@ -379,4 +391,4 @@ v1.0.1 (إصلاح `calculatedOrder_lookup` — بلاغ #55619:
 
 آخر تحديث: 29-10-2026 — Worker v1.2.0 (التسليم الجزئي على أوردرات الاستبدال S2 · نص الـ Reason في صفوف). ما اتجرّبش على شوبيفاي حقيقية.
 
-آخر تحديث: 31-10-2026 — Worker v1.2.1 (توحيد الألفاظ: نص السجل `notes` بقى «حذف …» بدل «شيل …» — تغيير نص بس، صفر تغيير في العقد ولا `extra`؛ `min` في الهب فضل `1.2.0`).
+آخر تحديث: 08-11-2026 — Worker v1.3.0 (فلتر `results` على `get_logs*` — الشرح فوق). السابق: 31-10-2026 — Worker v1.2.1 (توحيد الألفاظ: نص السجل `notes` بقى «حذف …» بدل «شيل …» — تغيير نص بس، صفر تغيير في العقد ولا `extra`؛ `min` في الهب فضل `1.2.0`).

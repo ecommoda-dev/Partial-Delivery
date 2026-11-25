@@ -82,7 +82,7 @@
 //    بترمي على JSON غلط). صفر قيمة `type` جديدة · صفر تغيير في الكتابة.
 // ══════════════════════════════════════════════════════════════
 const TOOL_NAME      = 'partial_delivery';
-const WORKER_VERSION = '1.3.0';
+const WORKER_VERSION = '1.4.0';
 
 // ══════════════════════════════════════════════════════════════
 // §CORS — Option B (قايمة صارمة)
@@ -391,6 +391,8 @@ const ORDER_FIELDS = `
   customer { displayName }
   manualStatusMf: metafield(namespace: "custom", key: "manual_status") { value }
   manualStatus2Mf: metafield(namespace: "custom", key: "status_2_r_e") { value }
+  zoneMf: metafield(namespace: "custom", key: "zone") { value }
+  courierMf: metafield(namespace: "custom", key: "courier") { value }
   lineItems(first: 50) {
     nodes { id title sku variantTitle currentQuantity quantity unfulfilledQuantity
              image { url } variant { id barcode } }
@@ -446,12 +448,28 @@ async function resolveOrder(env, token, rawQuery, costLog) {
 //    ⛔ الاتنين مؤهلين مع بعض (S1 و S2 معًا) = رفض بسبب مكتوب — قرار أحمد 29-10-2026.
 const ELIGIBLE_STATUS = new Set(['Shipped', 'In-Return']);
 
+// 🔴 v1.4.0 — ماكينة `s1_ready`: أوردر S1 = Ready على Showroom (Zone و Courier الاتنين) وفلفلمنته UNFULFILLED.
+//    الطرد ما خرجش من المكتب — فمفيش فلفلمنت يتلغى ولا يتعاد، والقطعة المحذوفة بتتسجّل في دفتر الرجوع
+//    للمخزن (هتفضل في المكتب لحد ما مندوب المخزن ياخدها). S2 = Ready خارج النطاق (قرار أحمد 25-11-2026).
+const normShowroom = v => String(v || '').trim().toLowerCase().replace(/[\s_-]/g, '');
+const isShowroomValue = v => normShowroom(v) === 'showroom';
+
 // بيرجّع { machine: 's1'|'s2'|null, reason }
 function pickMachine(order) {
   const s1 = order.manualStatusMf?.value || null;
   const s2 = order.manualStatus2Mf?.value || null;
   const s1Ok = !!s1 && ELIGIBLE_STATUS.has(s1);
   const s2Ok = !!s2 && ELIGIBLE_STATUS.has(s2);
+  if (s1 === 'Ready') {
+    const zone = order.zoneMf?.value || null;
+    const courier = order.courierMf?.value || null;
+    if (!isShowroomValue(zone) || !isShowroomValue(courier))
+      return { machine: null,
+        reason: `S1 = Ready — التسليم الجزئي على أوردر Ready مسموح لـ Showroom بس (Zone = Show_Room و Courier = Showroom). الحالي: Zone = ${zone || '—'} · Courier = ${courier || '—'}` };
+    if (s2Ok)
+      return { machine: null, reason: `S1 = Ready و S2 = ${s2} معًا — حالة غير متوقعة، الأداة بتوقف عن قصد` };
+    return { machine: 's1_ready', reason: null };
+  }
   if (s1Ok && s2Ok)
     return { machine: null, reason: `S1 = ${s1} و S2 = ${s2} معًا — الأوردر على الماكينتين في نفس الوقت، والأداة بتوقف عن قصد. لازم واحدة منهم تتقفل الأول وبعدها حاول تاني` };
   if (s1Ok) return { machine: 's1', reason: null };
@@ -468,8 +486,13 @@ function pickMachine(order) {
 // منتج واحد:  تسليم جزئي / العميل لم يستلم المنتج (SKU ×الكمية) / والقطعة رجعت مع المندوب / تم استلام…
 // أكتر من منتج: سطر لكل (SKU ×الكمية). SKU فاضي → title بدله.
 // سبب الموظف الحر (لو كُتب) في سطر «ملاحظة:» آخر الرسالة.
-function buildStaffNote(items, employee, reason) {
+function buildStaffNote(items, employee, reason, machine) {
   const label = i => `(${i.sku || i.title} ×${i.quantity})`;
+  if (machine === 's1_ready') { // v1.4.0 — Ready/Showroom: القطعة في المكتب مش مع مندوب
+    const l = ['تسليم جزئي شو روم', ...items.map(label), `تم الحذف من الأوردر بواسطة ${employee}`];
+    if (reason) l.push(`ملاحظة: ${reason}`);
+    return l.join('\n');
+  }
   const lines = ['تسليم جزئي'];
   if (items.length === 1) {
     lines.push(`العميل لم يستلم المنتج ${label(items[0])}`, 'والقطعة رجعت مع المندوب');
@@ -532,7 +555,10 @@ function checkEligibility(order, requestedLineItemIds, ctx = {}) {
   const { machine, reason } = pickMachine(order);
   if (!machine) return { eligible: false, reason };
 
-  if (!['FULFILLED', 'PARTIALLY_FULFILLED'].includes(order.displayFulfillmentStatus))
+  if (machine === 's1_ready') {
+    if (order.displayFulfillmentStatus !== 'UNFULFILLED')
+      return { eligible: false, reason: `حالة الفلفلمنت = ${order.displayFulfillmentStatus} — أوردر Ready لازم يبقى UNFULFILLED (الطرد لسه في المكتب)` };
+  } else if (!['FULFILLED', 'PARTIALLY_FULFILLED'].includes(order.displayFulfillmentStatus))
     return { eligible: false, reason: `حالة الفلفلمنت = ${order.displayFulfillmentStatus} — الأداة محتاجة أوردر Fulfilled فعلاً` };
 
   let removable = null;
@@ -1003,12 +1029,16 @@ export default {
             : null;
 
           // ② Order Edit — تصفير كمية العناصر المطلوب حذفها
-          const staffNote = buildStaffNote(removedItemsMeta, employee, reason);
+          const staffNote = buildStaffNote(removedItemsMeta, employee, reason, elig.machine);
           const editedOrderId = await editRemoveLineItems(env, token, gid, lineItemIds, !!restock, staffNote, actions, costLog);
 
           // ③ إعادة فلفلمنت الباقي — تكميلي، فشله warning مش error (Step 5A ⑩②)
           try {
-            await refulfillRemaining(env, token, editedOrderId || gid, actions, costLog, keepLineIds);
+            if (elig.machine === 's1_ready') {
+              actions.push('fulfillmentCreate×0 (أوردر Ready — الطرد لسه في المكتب، مفيش إعادة فلفلمنت)');
+            } else {
+              await refulfillRemaining(env, token, editedOrderId || gid, actions, costLog, keepLineIds);
+            }
             result.status = 'success';
           } catch (e2) {
             result.status = 'warning';
@@ -1061,6 +1091,8 @@ export default {
               s2Before: order.manualStatus2Mf?.value || null,
               fulfillmentStatusBefore: order.displayFulfillmentStatus,
               ledger: ledger || undefined,
+              flow: elig.machine === 's1_ready' ? 'ready_showroom' : undefined,
+              zone: order.zoneMf?.value || undefined, courier: order.courierMf?.value || undefined,
             },
           });
         } catch { logged = false; }

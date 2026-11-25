@@ -82,7 +82,7 @@
 //    بترمي على JSON غلط). صفر قيمة `type` جديدة · صفر تغيير في الكتابة.
 // ══════════════════════════════════════════════════════════════
 const TOOL_NAME      = 'partial_delivery';
-const WORKER_VERSION = '1.4.0';
+const WORKER_VERSION = '1.5.0';
 
 // ══════════════════════════════════════════════════════════════
 // §CORS — Option B (قايمة صارمة)
@@ -540,6 +540,40 @@ function postCycleLineIds(order, cycleStart, includeCancelled) {
   return ids;
 }
 
+// v1.5.0 — أقصى كمية تتحذف من السطر: S1 = كل الكمية الحالية · S2 = اللي اتفلفل من السطر بعد بداية الدورة (بحد الكمية الحالية)
+function maxRemovableQty(order, li, machine, cycleStart) {
+  if (machine !== 's2') return li.currentQuantity;
+  const t0 = Date.parse(cycleStart);
+  let out = 0;
+  for (const f of order.fulfillments || []) {
+    if (f.status === 'CANCELLED' || !(Date.parse(f.createdAt) > t0)) continue;
+    for (const n of f.fulfillmentLineItems?.nodes || []) if (n.lineItem?.id === li.id) out += n.quantity || 0;
+  }
+  return Math.min(li.currentQuantity, out);
+}
+
+// v1.5.0 — كمية الحذف لكل سطر: `quantities[id]` اختياري (غيابه = الكمية كلها). بيرجّع { qtyById } أو { error }
+function resolveRemoveQuantities(order, lineItemIds, quantities, machine, cycleStart) {
+  const byId = new Map((order.lineItems?.nodes || []).map(li => [li.id, li]));
+  const qtyById = {};
+  for (const id of lineItemIds) {
+    const li = byId.get(id);
+    if (!li) continue;
+    const max = maxRemovableQty(order, li, machine, cycleStart);
+    const raw = quantities && Object.prototype.hasOwnProperty.call(quantities, id) ? quantities[id] : max;
+    if (!Number.isInteger(raw) || raw < 1)
+      return { error: `كمية الحذف للمنتج ${li.sku || li.title} لازم تكون رقم صحيح ≥ 1` };
+    if (raw > max)
+      return { error: `كمية الحذف المطلوبة (${raw}) للمنتج ${li.sku || li.title} أكبر من المتاح للحذف (${max})` };
+    qtyById[id] = raw;
+  }
+  // 🔴 ممنوع حذف كل محتوى الأوردر — لازم يتبقى منتج واحد على الأقل
+  const remaining = (order.lineItems?.nodes || []).reduce((sum, li) => sum + li.currentQuantity - (qtyById[li.id] || 0), 0);
+  if (remaining <= 0)
+    return { error: 'ده آخر منتج في الأوردر — حذف كل المحتوى ممنوع (الأوردر لازم يفضل فيه منتج واحد على الأقل). استخدم إلغاء الأوردر بدل التسليم الجزئي' };
+  return { qtyById };
+}
+
 // المنتجات المسموح حذفها: S1 = أي سطر لسه موجود · S2 = القطع الخارجة في آخر دورة بس
 function removableLineIds(order, machine, cycleStart) {
   const live = (order.lineItems?.nodes || []).filter(li => li.currentQuantity > 0);
@@ -679,7 +713,7 @@ async function cancelFulfillments(env, token, fulfillments, actions, costLog) {
 //    بس النوع في الـ gid بيتغيّر (مقيس حيًا على #55619 20-09-2026: LineItem
 //    /17587028033858 → CalculatedLineItem/17587028033858، ونفس الملاحظة
 //    موجودة في Order-Item-Remover على #47101 26-08-2026).
-async function editRemoveLineItems(env, token, orderId, lineItemIds, restock, staffNote, actions, costLog) {
+async function editRemoveLineItems(env, token, orderId, lineItemIds, restock, staffNote, actions, costLog, qtyById = {}) {
   // ① orderEditBegin
   const beginData = await shopifyGQL(env, token, `
     mutation OrderEditBegin($id: ID!) {
@@ -705,19 +739,22 @@ async function editRemoveLineItems(env, token, orderId, lineItemIds, restock, st
     const match = calcNodes.find(n => gidToNumeric(n.id) === targetNumericId);
     if (!match) throw new Error(`orderEditSetQuantity: مالقتش calculated line item للمنتج ${liId}`);
     const calcLiId = match.id;
+    // v1.5.0 — الكمية الجديدة = الحالية − المحذوف (الغياب = صفر، زي الأول)
+    const removeQty = qtyById[liId] || match.quantity;
+    const newQty = Math.max(0, match.quantity - removeQty);
     const setData = await shopifyGQL(env, token, `
       mutation SetQty($id: ID!, $lineItemId: ID!, $quantity: Int!, $restock: Boolean) {
         orderEditSetQuantity(id: $id, lineItemId: $lineItemId, quantity: $quantity, restock: $restock) {
           calculatedLineItem { id quantity }
           userErrors { field message }
         }
-      }`, { id: calcOrderId, lineItemId: calcLiId, quantity: 0, restock: !!restock }, 'orderEditSetQuantity', costLog);
+      }`, { id: calcOrderId, lineItemId: calcLiId, quantity: newQty, restock: !!restock }, 'orderEditSetQuantity', costLog);
     const setRes  = setData.data?.orderEditSetQuantity;
     const setErrs = setRes?.userErrors || [];
     if (setErrs.length) throw new Error('orderEditSetQuantity: ' + setErrs.map(e => e.message).join(' | '));
-    if (setRes?.calculatedLineItem?.quantity !== 0)
-      throw new Error(`orderEditSetQuantity: الكمية ما اتصفّرتش فعليًا (${setRes?.calculatedLineItem?.quantity})`);
-    actions.push(`orderEditSetQuantity(0)×1 (${liId})`);
+    if (setRes?.calculatedLineItem?.quantity !== newQty)
+      throw new Error(`orderEditSetQuantity: الكمية ما اتضبطتش فعليًا (المتوقع ${newQty} · الفعلي ${setRes?.calculatedLineItem?.quantity})`);
+    actions.push(`orderEditSetQuantity(${newQty})×1 (${liId} · حذف ${removeQty})`);
   }
 
   // ④ orderEditCommit
@@ -958,6 +995,7 @@ export default {
               unfulfilledQuantity: li.unfulfilledQuantity, image: li.image?.url || null,
               removed: li.currentQuantity === 0,
               removable: removableSet.has(li.id),
+              maxRemovable: removableSet.has(li.id) ? maxRemovableQty(order, li, elig.machine, cycle.cycleStart) : 0,
             })),
           },
           eligibility: elig,
@@ -969,7 +1007,7 @@ export default {
       if (action === 'remove_items') {
         if (request.method !== 'POST') return json({ error: 'POST required' }, 405, request);
         const body = await request.json().catch(() => ({}));
-        const { employee, orderId, lineItemIds, restock, reason } = body;
+        const { employee, orderId, lineItemIds, restock, reason, quantities } = body;
 
         if (!employee)                                    return json({ ok: false, error: 'employee مطلوب' }, 400, request);
         if (!orderId)                                      return json({ ok: false, error: 'orderId مطلوب' }, 400, request);
@@ -977,6 +1015,8 @@ export default {
           return json({ ok: false, error: 'lineItemIds (مصفوفة) مطلوبة' }, 400, request);
         if (lineItemIds.length > MAX_ITEMS_PER_REQUEST)
           return json({ ok: false, error: `عدد كبير (${lineItemIds.length}) — الحد ${MAX_ITEMS_PER_REQUEST} لكل نداء` }, 400, request);
+        if (quantities != null && (typeof quantities !== 'object' || Array.isArray(quantities)))
+          return json({ ok: false, error: 'quantities لازم تكون object (lineItemId → كمية)' }, 400, request);
 
         const token   = await getAccessToken(env);
         const costLog = [];
@@ -1007,9 +1047,19 @@ export default {
           return json({ ok: true, status: 'already', message: 'المنتج(ات) دي متشالة من الأوردر بالفعل' }, 200, request);
         }
 
+        // v1.5.0 — كمية كل سطر + منع حذف آخر منتج في الأوردر
+        const rq = resolveRemoveQuantities(order, lineItemIds, quantities, elig.machine, cycle.cycleStart);
+        if (rq.error) {
+          await writeLog(env.DB, { tool: TOOL_NAME, type: 'rejected', employee, orderId, orderName: order.name,
+            notes: rq.error, extra: { result: 'rejected', stage: 'lookup', lineItemIds, quantities: quantities || null } }).catch(() => {});
+          return json({ ok: false, status: 'rejected', error: rq.error }, 409, request);
+        }
+        const qtyById = rq.qtyById;
+
         const removedItemsMeta = (order.lineItems.nodes || [])
           .filter(li => lineItemIds.includes(li.id))
-          .map(li => ({ id: li.id, title: li.title, sku: li.sku, quantity: li.currentQuantity,
+          .map(li => ({ id: li.id, title: li.title, sku: li.sku, quantity: qtyById[li.id] ?? li.currentQuantity,
+                        remainingQuantity: li.currentQuantity - (qtyById[li.id] ?? li.currentQuantity),
                         variantId: li.variant?.id || null, barcode: li.variant?.barcode || null }));
 
         let result = { status: 'error', error: null, warnings: [] };
@@ -1023,14 +1073,16 @@ export default {
             ? (order.fulfillments || []).filter(f => f.status !== 'CANCELLED' && holding(f))
             : order.fulfillments;
           await cancelFulfillments(env, token, toCancel, actions, costLog);
+          // سطر اتحذف منه جزء بس لسه فيه قطع باقية لازم تتفلفل تاني (v1.5.0)
+          const fullyRemoved = new Set(removedItemsMeta.filter(i => i.remainingQuantity === 0).map(i => i.id));
           const keepLineIds = elig.machine === 's2'
             ? new Set((toCancel || []).flatMap(f => (f.fulfillmentLineItems?.nodes || []).map(n => n.lineItem?.id))
-                .filter(id => id && !targetSet.has(id)))
+                .filter(id => id && !fullyRemoved.has(id)))
             : null;
 
           // ② Order Edit — تصفير كمية العناصر المطلوب حذفها
           const staffNote = buildStaffNote(removedItemsMeta, employee, reason, elig.machine);
-          const editedOrderId = await editRemoveLineItems(env, token, gid, lineItemIds, !!restock, staffNote, actions, costLog);
+          const editedOrderId = await editRemoveLineItems(env, token, gid, lineItemIds, !!restock, staffNote, actions, costLog, qtyById);
 
           // ③ إعادة فلفلمنت الباقي — تكميلي، فشله warning مش error (Step 5A ⑩②)
           try {
@@ -1083,7 +1135,7 @@ export default {
             tool: TOOL_NAME,
             type: result.status === 'error' ? 'remove_failed' : 'remove_item',
             employee, orderId, orderName: order.name,
-            notes: result.status === 'error' ? result.error : `حذف ${removedItemsMeta.map(i => i.sku || i.title).join(', ')}`,
+            notes: result.status === 'error' ? result.error : `حذف ${removedItemsMeta.map(i => `${i.sku || i.title} ×${i.quantity}`).join(', ')}`,
             extra: {
               result: result.status, stage: 'write', machine: elig.machine,
               actions, removedItems: removedItemsMeta, restock: !!restock, reason: reason || null,
